@@ -336,7 +336,7 @@ class Tracer(trace_api.Tracer):
         name: str,
         parent: trace_api.ParentSpan = trace_api.Tracer.CURRENT_SPAN,
         kind: trace_api.SpanKind = trace_api.SpanKind.INTERNAL,
-    ) -> "Span":
+    ) -> typing.Iterator[trace_api.Span]:
         """See `opentelemetry.trace.Tracer.start_span`."""
 
         span = self.create_span(name, parent, kind)
