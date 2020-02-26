@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import unittest
+from contextlib import contextmanager
+from unittest import mock
 
 from opentelemetry import metrics
 
@@ -20,49 +22,61 @@ from opentelemetry import metrics
 # pylint: disable=no-self-use
 class TestMeter(unittest.TestCase):
     def setUp(self):
-        self.meter = metrics.Meter()
+        self.meter = metrics.DefaultMeter()
 
     def test_record_batch(self):
         counter = metrics.Counter()
-        self.meter.record_batch(("values"), ((counter, 1),))
+        label_set = metrics.LabelSet()
+        self.meter.record_batch(label_set, ((counter, 1),))
 
     def test_create_metric(self):
         metric = self.meter.create_metric("", "", "", float, metrics.Counter)
         self.assertIsInstance(metric, metrics.DefaultMetric)
 
+    def test_get_label_set(self):
+        metric = self.meter.get_label_set({})
+        self.assertIsInstance(metric, metrics.DefaultLabelSet)
+
 
 class TestMetrics(unittest.TestCase):
     def test_default(self):
         default = metrics.DefaultMetric()
-        handle = default.get_handle(("test", "test1"))
+        default_ls = metrics.DefaultLabelSet()
+        handle = default.get_handle(default_ls)
         self.assertIsInstance(handle, metrics.DefaultMetricHandle)
 
     def test_counter(self):
         counter = metrics.Counter()
-        handle = counter.get_handle(("test", "test1"))
+        label_set = metrics.LabelSet()
+        handle = counter.get_handle(label_set)
         self.assertIsInstance(handle, metrics.CounterHandle)
 
     def test_counter_add(self):
         counter = metrics.Counter()
-        counter.add(("value",), 1)
+        label_set = metrics.LabelSet()
+        counter.add(1, label_set)
 
     def test_gauge(self):
         gauge = metrics.Gauge()
-        handle = gauge.get_handle(("test", "test1"))
+        label_set = metrics.LabelSet()
+        handle = gauge.get_handle(label_set)
         self.assertIsInstance(handle, metrics.GaugeHandle)
 
     def test_gauge_set(self):
         gauge = metrics.Gauge()
-        gauge.set(("value",), 1)
+        label_set = metrics.LabelSet()
+        gauge.set(1, label_set)
 
     def test_measure(self):
         measure = metrics.Measure()
-        handle = measure.get_handle(("test", "test1"))
+        label_set = metrics.LabelSet()
+        handle = measure.get_handle(label_set)
         self.assertIsInstance(handle, metrics.MeasureHandle)
 
     def test_measure_record(self):
         measure = metrics.Measure()
-        measure.record(("value",), 1)
+        label_set = metrics.LabelSet()
+        measure.record(1, label_set)
 
     def test_default_handle(self):
         metrics.DefaultMetricHandle()
@@ -78,3 +92,34 @@ class TestMetrics(unittest.TestCase):
     def test_measure_handle(self):
         handle = metrics.MeasureHandle()
         handle.record(1)
+
+
+@contextmanager
+# type: ignore
+def patch_metrics_globals(meter=None, meter_factory=None):
+    """Mock metrics._METER and metrics._METER_FACTORY.
+
+    This prevents previous changes to these values from affecting the code in
+    this scope, and prevents changes in this scope from leaking out and
+    affecting other tests.
+    """
+    with mock.patch("opentelemetry.metrics._METER", meter):
+        with mock.patch("opentelemetry.metrics._METER_FACTORY", meter_factory):
+            yield
+
+
+class TestGlobals(unittest.TestCase):
+    def test_meter_default_factory(self):
+        """Check that the default meter is a DefaultMeter."""
+        with patch_metrics_globals():
+            meter = metrics.meter()
+            self.assertIsInstance(meter, metrics.DefaultMeter)
+            # Check that we don't create a new instance on each call
+            self.assertIs(meter, metrics.meter())
+
+    def test_meter_custom_factory(self):
+        """Check that we use the provided factory for custom global meters."""
+        mock_meter = mock.Mock(metrics.Meter)
+        with patch_metrics_globals(meter_factory=lambda _: mock_meter):
+            meter = metrics.meter()
+            self.assertIs(meter, mock_meter)
