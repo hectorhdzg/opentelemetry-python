@@ -32,10 +32,10 @@ gRPC is still not supported by this implementation.
 
     from opentelemetry import trace
     from opentelemetry.ext import jaeger
-    from opentelemetry.sdk.trace import TracerSource
+    from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchExportSpanProcessor
 
-    trace.set_preferred_tracer_source_implementation(lambda T: TracerSource())
+    trace.set_preferred_tracer_provider_implementation(lambda T: TracerProvider())
     tracer = trace.get_tracer(__name__)
 
     # create a JaegerSpanExporter
@@ -56,7 +56,7 @@ gRPC is still not supported by this implementation.
     span_processor = BatchExportSpanProcessor(jaeger_exporter)
 
     # add to the tracer
-    tracer.add_span_processor(span_processor)
+    trace.tracer_provider().add_span_processor(span_processor)
 
     with tracer.start_as_current_span('foo'):
         print('Hello world!')

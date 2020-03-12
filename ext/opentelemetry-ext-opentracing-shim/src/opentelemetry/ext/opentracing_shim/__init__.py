@@ -29,11 +29,11 @@ following example::
     import time
 
     from opentelemetry import trace
-    from opentelemetry.sdk.trace import TracerSource
+    from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.ext.opentracing_shim import create_tracer
 
     # Tell OpenTelemetry which Tracer implementation to use.
-    trace.set_preferred_tracer_source_implementation(lambda T: TracerSource())
+    trace.set_preferred_tracer_provider_implementation(lambda T: TracerProvider())
 
     # Create an OpenTelemetry Tracer.
     otel_tracer = trace.get_tracer(__name__)
@@ -93,19 +93,23 @@ from opentelemetry import propagators
 from opentelemetry.ext.opentracing_shim import util
 from opentelemetry.ext.opentracing_shim.version import __version__
 from opentelemetry.trace import DefaultSpan
+from opentelemetry.trace.propagation import (
+    get_span_from_context,
+    set_span_in_context,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def create_tracer(otel_tracer_source):
+def create_tracer(otel_tracer_provider):
     """Creates a :class:`TracerShim` object from the provided OpenTelemetry
-    :class:`opentelemetry.trace.TracerSource`.
+    :class:`opentelemetry.trace.TracerProvider`.
 
     The returned :class:`TracerShim` is an implementation of
     :class:`opentracing.Tracer` using OpenTelemetry under the hood.
 
     Args:
-        otel_tracer_source: A :class:`opentelemetry.trace.TracerSource` to be
+        otel_tracer_provider: A :class:`opentelemetry.trace.TracerProvider` to be
             used for constructing the :class:`TracerShim`. A tracer from this
             source will be used to perform the actual tracing when user code is
             instrumented using the OpenTracing API.
@@ -114,7 +118,7 @@ def create_tracer(otel_tracer_source):
         The created :class:`TracerShim`.
     """
 
-    return TracerShim(otel_tracer_source.get_tracer(__name__, __version__))
+    return TracerShim(otel_tracer_provider.get_tracer(__name__, __version__))
 
 
 class SpanContextShim(opentracing.SpanContext):
@@ -677,11 +681,8 @@ class TracerShim(opentracing.Tracer):
 
         propagator = propagators.get_global_httptextformat()
 
-        propagator.inject(
-            DefaultSpan(span_context.unwrap()),
-            type(carrier).__setitem__,
-            carrier,
-        )
+        ctx = set_span_in_context(DefaultSpan(span_context.unwrap()))
+        propagator.inject(type(carrier).__setitem__, carrier, context=ctx)
 
     def extract(self, format, carrier):
         """Implements the ``extract`` method from the base class."""
@@ -700,6 +701,7 @@ class TracerShim(opentracing.Tracer):
             return [value] if value is not None else []
 
         propagator = propagators.get_global_httptextformat()
-        otel_context = propagator.extract(get_as_list, carrier)
+        ctx = propagator.extract(get_as_list, carrier)
+        otel_context = get_span_from_context(ctx).get_context()
 
         return SpanContextShim(otel_context)
