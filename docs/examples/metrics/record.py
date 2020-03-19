@@ -23,9 +23,8 @@ from opentelemetry.sdk.metrics import Counter, MeterProvider
 from opentelemetry.sdk.metrics.export import ConsoleMetricsExporter
 from opentelemetry.sdk.metrics.export.controller import PushController
 
-# The preferred tracer implementation must be set, as the opentelemetry-api
-# defines the interface with a no-op implementation.
-metrics.set_preferred_meter_provider_implementation(lambda _: MeterProvider())
+# Use the meter type provided by the SDK package
+metrics.set_meter_provider(MeterProvider())
 # Meter is responsible for creating and recording metrics
 meter = metrics.get_meter(__name__)
 # exporter to export metrics to the console
@@ -68,7 +67,11 @@ label_set = meter.get_label_set({"environment": "staging"})
 # Therefore, getting a bound metric instrument using the same set of labels
 # will yield the same bound metric instrument.
 bound_counter = counter.bind(label_set)
-bound_counter.add(100)
+for i in range(1000):
+    bound_counter.add(i)
+
+# You can release the bound instrument we you are done
+bound_counter.release()
 
 # Direct metric usage
 # You can record metrics directly using the metric instrument. You pass in a
@@ -80,4 +83,5 @@ counter.add(25, label_set)
 # (metric, value) pairs. The value would be recorded for each metric using the
 # specified labelset for each.
 meter.record_batch(label_set, [(counter, 50), (counter2, 70)])
-time.sleep(100)
+
+time.sleep(10)
