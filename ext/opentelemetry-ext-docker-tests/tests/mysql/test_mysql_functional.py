@@ -29,7 +29,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 MYSQL_USER = os.getenv("MYSQL_USER ", "testuser")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD ", "testpassword")
 MYSQL_HOST = os.getenv("MYSQL_HOST ", "localhost")
-MYSQL_PORT = int(os.getenv("MYSQL_PORT ", "3306"))
+MYSQL_PORT = int(os.getenv("MYSQL_PORT ", "3308"))
 MYSQL_DB_NAME = os.getenv("MYSQL_DB_NAME ", "opentelemetry-tests")
 
 
@@ -93,7 +93,7 @@ class TestFunctionalMysql(unittest.TestCase):
         """Should create a child span for executemany
         """
         with self._tracer.start_as_current_span("rootSpan"):
-            data = (("1"), ("2"), ("3"))
+            data = [("1"), ("2"), ("3")]
             stmt = "INSERT INTO test (id) VALUES (%s)"
             self._cursor.executemany(stmt, data)
         self.validate_spans()
