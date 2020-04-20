@@ -101,7 +101,10 @@ class TestFunctionalPsycopg(unittest.TestCase):
         """
         with self._tracer.start_as_current_span("rootSpan"):
             data = ("1", "2", "3")
-            stmt = "INSERT INTO test (id) VALUES (%s)"
+            stmt = (
+                "CREATE TABLE IF NOT EXISTS test (id integer);"
+                "INSERT INTO test (id) VALUES (%s)"
+            )
             self._cursor.executemany(stmt, data)
         self.validate_spans()
 
