@@ -78,7 +78,7 @@ from contextlib import contextmanager
 from logging import getLogger
 
 from opentelemetry.trace.status import Status
-from opentelemetry.util import _load_provider, types
+from opentelemetry.util import _load_trace_provider, types
 
 logger = getLogger(__name__)
 
@@ -461,7 +461,7 @@ class TracerProvider(abc.ABC):
                 This should *not* be the name of the module that is
                 instrumented but the name of the module doing the instrumentation.
                 E.g., instead of ``"requests"``, use
-                ``"opentelemetry.ext.http_requests"``.
+                ``"opentelemetry.ext.requests"``.
 
             instrumenting_library_version: Optional. The version string of the
                 instrumenting library.  Usually this should be the same as
@@ -706,6 +706,6 @@ def get_tracer_provider() -> TracerProvider:
     global _TRACER_PROVIDER  # pylint: disable=global-statement
 
     if _TRACER_PROVIDER is None:
-        _TRACER_PROVIDER = _load_provider("tracer_provider")
+        _TRACER_PROVIDER = _load_trace_provider("tracer_provider")
 
     return _TRACER_PROVIDER
