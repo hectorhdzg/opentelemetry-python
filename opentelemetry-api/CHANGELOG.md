@@ -2,6 +2,62 @@
 
 ## Unreleased
 
+- Add optional parameter to `record_exception` method ([#1314](https://github.com/open-telemetry/opentelemetry-python/pull/1314))
+
+## Version 0.15b0
+
+Released 2020-11-02
+
+- Updating status codes to adhere to specs ([#1282](https://github.com/open-telemetry/opentelemetry-python/pull/1282))
+
+## Version 0.14b0
+
+Released 2020-10-13
+- Add optional parameter to `record_exception` method
+  ([#1242](https://github.com/open-telemetry/opentelemetry-python/pull/1242))
+- Add support for `OTEL_PROPAGATORS`
+  ([#1123](https://github.com/open-telemetry/opentelemetry-python/pull/1123))
+- Store `int`s as `int`s in the global Configuration object
+  ([#1118](https://github.com/open-telemetry/opentelemetry-python/pull/1118))
+- Allow for Custom Trace and Span IDs Generation - `IdsGenerator` for TracerProvider
+  ([#1153](https://github.com/open-telemetry/opentelemetry-python/pull/1153))
+- Update baggage propagation header
+  ([#1194](https://github.com/open-telemetry/opentelemetry-python/pull/1194))
+- Make instances of SpanContext immutable
+  ([#1134](https://github.com/open-telemetry/opentelemetry-python/pull/1134))
+- Parent is now always passed in via Context, intead of Span or SpanContext
+  ([#1146](https://github.com/open-telemetry/opentelemetry-python/pull/1146))
+- Add keys method to TextMap propagator Getter
+  ([#1196](https://github.com/open-telemetry/opentelemetry-python/issues/1196))
+
+## Version 0.13b0
+
+Released 2020-09-17
+
+- Refactor `SpanContext.is_valid` from a method to a data attribute
+  ([#1005](https://github.com/open-telemetry/opentelemetry-python/pull/1005))
+- Moved samplers from API to SDK
+  ([#1023](https://github.com/open-telemetry/opentelemetry-python/pull/1023))
+- Change return value type of `correlationcontext.get_correlations` to immutable `MappingProxyType`
+  ([#1024](https://github.com/open-telemetry/opentelemetry-python/pull/1024))
+- Change is_recording_events to is_recording
+  ([#1034](https://github.com/open-telemetry/opentelemetry-python/pull/1034))
+- Remove lazy Event and Link API from Span interface
+  ([#1045](https://github.com/open-telemetry/opentelemetry-python/pull/1045))
+- Rename CorrelationContext to Baggage
+  ([#1060](https://github.com/open-telemetry/opentelemetry-python/pull/1060))
+- Rename HTTPTextFormat to TextMapPropagator. This change also updates `get_global_httptextformat` and
+  `set_global_httptextformat` to `get_global_textmap` and `set_global_textmap`
+  ([#1085](https://github.com/open-telemetry/opentelemetry-python/pull/1085))
+- Fix api/sdk setup.cfg to include missing python files
+  ([#1091](https://github.com/open-telemetry/opentelemetry-python/pull/1091))
+- Drop support for Python 3.4
+  ([#1099](https://github.com/open-telemetry/opentelemetry-python/pull/1099))
+
+## Version 0.12b0
+
+Released 2020-08-14
+
 - Update environment variable names, prefix changed from `OPENTELEMETRY` to `OTEL`
   ([#904](https://github.com/open-telemetry/opentelemetry-python/pull/904))
 - Stop TracerProvider and MeterProvider from being overridden

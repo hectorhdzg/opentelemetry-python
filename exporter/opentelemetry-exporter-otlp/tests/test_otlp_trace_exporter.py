@@ -19,8 +19,9 @@ from unittest.mock import Mock, PropertyMock, patch
 
 from google.protobuf.duration_pb2 import Duration
 from google.rpc.error_details_pb2 import RetryInfo
-from grpc import StatusCode, server
+from grpc import ChannelCredentials, StatusCode, server
 
+from opentelemetry.configuration import Configuration
 from opentelemetry.exporter.otlp.trace_exporter import OTLPSpanExporter
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
     ExportTraceServiceRequest,
@@ -30,23 +31,27 @@ from opentelemetry.proto.collector.trace.v1.trace_service_pb2_grpc import (
     TraceServiceServicer,
     add_TraceServiceServicer_to_server,
 )
-from opentelemetry.proto.common.v1.common_pb2 import AnyValue, KeyValue
+from opentelemetry.proto.common.v1.common_pb2 import (
+    AnyValue,
+    InstrumentationLibrary,
+    KeyValue,
+)
 from opentelemetry.proto.resource.v1.resource_pb2 import (
-    Resource as CollectorResource,
+    Resource as OTLPResource,
 )
 from opentelemetry.proto.trace.v1.trace_pb2 import (
     InstrumentationLibrarySpans,
     ResourceSpans,
 )
-from opentelemetry.proto.trace.v1.trace_pb2 import Span as CollectorSpan
+from opentelemetry.proto.trace.v1.trace_pb2 import Span as OTLPSpan
 from opentelemetry.proto.trace.v1.trace_pb2 import Status
 from opentelemetry.sdk.resources import Resource as SDKResource
-from opentelemetry.sdk.trace import Span, TracerProvider
+from opentelemetry.sdk.trace import TracerProvider, _Span
 from opentelemetry.sdk.trace.export import (
     SimpleExportSpanProcessor,
     SpanExportResult,
 )
-from opentelemetry.trace import SpanKind
+from opentelemetry.sdk.util.instrumentation import InstrumentationInfo
 
 
 class TraceServiceServicerUNAVAILABLEDelay(TraceServiceServicer):
@@ -87,10 +92,18 @@ class TraceServiceServicerSUCCESS(TraceServiceServicer):
         return ExportTraceServiceResponse()
 
 
+class TraceServiceServicerALREADY_EXISTS(TraceServiceServicer):
+    # pylint: disable=invalid-name,unused-argument,no-self-use
+    def Export(self, request, context):
+        context.set_code(StatusCode.ALREADY_EXISTS)
+
+        return ExportTraceServiceResponse()
+
+
 class TestOTLPSpanExporter(TestCase):
     def setUp(self):
         tracer_provider = TracerProvider()
-        self.exporter = OTLPSpanExporter()
+        self.exporter = OTLPSpanExporter(insecure=True)
         tracer_provider.add_span_processor(
             SimpleExportSpanProcessor(self.exporter)
         )
@@ -111,7 +124,7 @@ class TestOTLPSpanExporter(TestCase):
 
         type(event_mock).name = PropertyMock(return_value="a")
 
-        self.span = Span(
+        self.span = _Span(
             "a",
             context=Mock(
                 **{
@@ -130,20 +143,48 @@ class TestOTLPSpanExporter(TestCase):
                         "context.trace_id": 1,
                         "context.span_id": 2,
                         "attributes": OrderedDict([("a", 1), ("b", False)]),
-                        "kind": SpanKind.INTERNAL,
+                        "kind": OTLPSpan.SpanKind.SPAN_KIND_INTERNAL,  # pylint: disable=no-member
                     }
                 )
             ],
+            instrumentation_info=InstrumentationInfo(
+                name="name", version="version"
+            ),
         )
 
         self.span.start()
         self.span.end()
 
+        Configuration._reset()  # pylint: disable=protected-access
+
     def tearDown(self):
         self.server.stop(None)
+        Configuration._reset()  # pylint: disable=protected-access
 
-    @patch("opentelemetry.exporter.otlp.trace_exporter.expo")
-    @patch("opentelemetry.exporter.otlp.trace_exporter.sleep")
+    @patch.dict(
+        "os.environ",
+        {
+            "OTEL_EXPORTER_OTLP_SPAN_ENDPOINT": "collector:55680",
+            "OTEL_EXPORTER_OTLP_SPAN_CERTIFICATE": "fixtures/test.cert",
+            "OTEL_EXPORTER_OTLP_SPAN_HEADERS": "key1:value1;key2:value2",
+            "OTEL_EXPORTER_OTLP_SPAN_TIMEOUT": "10",
+        },
+    )
+    @patch("opentelemetry.exporter.otlp.exporter.OTLPExporterMixin.__init__")
+    def test_env_variables(self, mock_exporter_mixin):
+        OTLPSpanExporter()
+
+        self.assertTrue(len(mock_exporter_mixin.call_args_list) == 1)
+        _, kwargs = mock_exporter_mixin.call_args_list[0]
+
+        self.assertEqual(kwargs["endpoint"], "collector:55680")
+        self.assertEqual(kwargs["headers"], "key1:value1;key2:value2")
+        self.assertEqual(kwargs["timeout"], 10)
+        self.assertIsNotNone(kwargs["credentials"])
+        self.assertIsInstance(kwargs["credentials"], ChannelCredentials)
+
+    @patch("opentelemetry.exporter.otlp.exporter.expo")
+    @patch("opentelemetry.exporter.otlp.exporter.sleep")
     def test_unavailable(self, mock_sleep, mock_expo):
 
         mock_expo.configure_mock(**{"return_value": [1]})
@@ -156,8 +197,8 @@ class TestOTLPSpanExporter(TestCase):
         )
         mock_sleep.assert_called_with(1)
 
-    @patch("opentelemetry.exporter.otlp.trace_exporter.expo")
-    @patch("opentelemetry.exporter.otlp.trace_exporter.sleep")
+    @patch("opentelemetry.exporter.otlp.exporter.expo")
+    @patch("opentelemetry.exporter.otlp.exporter.sleep")
     def test_unavailable_delay(self, mock_sleep, mock_expo):
 
         mock_expo.configure_mock(**{"return_value": [1]})
@@ -178,12 +219,20 @@ class TestOTLPSpanExporter(TestCase):
             self.exporter.export([self.span]), SpanExportResult.SUCCESS
         )
 
+    def test_failure(self):
+        add_TraceServiceServicer_to_server(
+            TraceServiceServicerALREADY_EXISTS(), self.server
+        )
+        self.assertEqual(
+            self.exporter.export([self.span]), SpanExportResult.FAILURE
+        )
+
     def test_translate_spans(self):
 
         expected = ExportTraceServiceRequest(
             resource_spans=[
                 ResourceSpans(
-                    resource=CollectorResource(
+                    resource=OTLPResource(
                         attributes=[
                             KeyValue(key="a", value=AnyValue(int_value=1)),
                             KeyValue(
@@ -193,8 +242,11 @@ class TestOTLPSpanExporter(TestCase):
                     ),
                     instrumentation_library_spans=[
                         InstrumentationLibrarySpans(
+                            instrumentation_library=InstrumentationLibrary(
+                                name="name", version="version"
+                            ),
                             spans=[
-                                CollectorSpan(
+                                OTLPSpan(
                                     # pylint: disable=no-member
                                     name="a",
                                     start_time_unix_nano=self.span.start_time,
@@ -211,7 +263,9 @@ class TestOTLPSpanExporter(TestCase):
                                     parent_span_id=(
                                         b"\000\000\000\000\000\00009"
                                     ),
-                                    kind=CollectorSpan.SpanKind.INTERNAL,
+                                    kind=(
+                                        OTLPSpan.SpanKind.SPAN_KIND_INTERNAL
+                                    ),
                                     attributes=[
                                         KeyValue(
                                             key="a",
@@ -223,7 +277,7 @@ class TestOTLPSpanExporter(TestCase):
                                         ),
                                     ],
                                     events=[
-                                        CollectorSpan.Event(
+                                        OTLPSpan.Event(
                                             name="a",
                                             time_unix_nano=1591240820506462784,
                                             attributes=[
@@ -244,7 +298,7 @@ class TestOTLPSpanExporter(TestCase):
                                     ],
                                     status=Status(code=0, message=""),
                                     links=[
-                                        CollectorSpan.Link(
+                                        OTLPSpan.Link(
                                             trace_id=int.to_bytes(
                                                 1, 16, "big"
                                             ),
@@ -266,7 +320,7 @@ class TestOTLPSpanExporter(TestCase):
                                         )
                                     ],
                                 )
-                            ]
+                            ],
                         )
                     ],
                 ),
@@ -274,4 +328,4 @@ class TestOTLPSpanExporter(TestCase):
         )
 
         # pylint: disable=protected-access
-        self.assertEqual(expected, self.exporter._translate_spans([self.span]))
+        self.assertEqual(expected, self.exporter._translate_data([self.span]))

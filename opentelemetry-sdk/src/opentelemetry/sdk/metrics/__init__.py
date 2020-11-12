@@ -15,7 +15,7 @@
 import atexit
 import logging
 import threading
-from typing import Dict, Sequence, Tuple, Type
+from typing import Dict, Sequence, Tuple, Type, TypeVar
 
 from opentelemetry import metrics as metrics_api
 from opentelemetry.sdk.metrics.export import (
@@ -23,8 +23,8 @@ from opentelemetry.sdk.metrics.export import (
     MetricsExporter,
 )
 from opentelemetry.sdk.metrics.export.aggregate import Aggregator
-from opentelemetry.sdk.metrics.export.batcher import Batcher
 from opentelemetry.sdk.metrics.export.controller import PushController
+from opentelemetry.sdk.metrics.export.processor import Processor
 from opentelemetry.sdk.metrics.view import (
     ViewData,
     ViewManager,
@@ -48,9 +48,7 @@ class BaseBoundInstrument:
         metric: The metric that created this bound instrument.
     """
 
-    def __init__(
-        self, labels: Tuple[Tuple[str, str]], metric: metrics_api.MetricT
-    ):
+    def __init__(self, labels: Tuple[Tuple[str, str]], metric: "MetricT"):
         self._labels = labels
         self._metric = metric
         self.view_datas = metric.meter.view_manager.get_view_datas(
@@ -132,7 +130,7 @@ class Metric(metrics_api.Metric):
     This is the class that is used to represent a metric that is to be
     synchronously recorded and tracked. Synchronous instruments are called
     inside a request, meaning they have an associated distributed context
-    (i.e. Span context, correlation context). Multiple metric events may occur
+    (i.e. Span context, baggage). Multiple metric events may occur
     for a synchronous instrument within a give collection interval.
 
     Each metric has a set of bound metrics that are created from the metric.
@@ -222,6 +220,9 @@ class ValueRecorder(Metric, metrics_api.ValueRecorder):
         bound_intrument.release()
 
     UPDATE_FUNCTION = record
+
+
+MetricT = TypeVar("MetricT", Counter, UpDownCounter, ValueRecorder)
 
 
 class Observer(metrics_api.Observer):
@@ -325,7 +326,7 @@ class ValueObserver(Observer, metrics_api.ValueObserver):
 
 
 class Record:
-    """Container class used for processing in the `Batcher`"""
+    """Container class used for processing in the `Processor`"""
 
     def __init__(
         self,
@@ -352,8 +353,7 @@ class Meter(metrics_api.Meter):
         instrumentation_info: "InstrumentationInfo",
     ):
         self.instrumentation_info = instrumentation_info
-        self.batcher = Batcher(source.stateful)
-        self.resource = source.resource
+        self.processor = Processor(source.stateful, source.resource)
         self.metrics = set()
         self.observers = set()
         self.metrics_lock = threading.Lock()
@@ -363,7 +363,7 @@ class Meter(metrics_api.Meter):
     def collect(self) -> None:
         """Collects all the metrics created with this `Meter` for export.
 
-        Utilizes the batcher to create checkpoints of the current values in
+        Utilizes the processor to create checkpoints of the current values in
         each aggregator belonging to the metrics that were created with this
         meter instance.
         """
@@ -385,7 +385,7 @@ class Meter(metrics_api.Meter):
                         record = Record(
                             metric, view_data.labels, view_data.aggregator
                         )
-                        self.batcher.process(record)
+                        self.processor.process(record)
 
                     if bound_instrument.ref_count() == 0:
                         to_remove.append(labels)
@@ -405,7 +405,7 @@ class Meter(metrics_api.Meter):
 
                 for labels, aggregator in observer.aggregators.items():
                     record = Record(observer, labels, aggregator)
-                    self.batcher.process(record)
+                    self.processor.process(record)
 
     def record_batch(
         self,
@@ -418,36 +418,99 @@ class Meter(metrics_api.Meter):
         for metric, value in record_tuples:
             metric.UPDATE_FUNCTION(value, labels)
 
-    def create_metric(
+    def create_counter(
         self,
         name: str,
         description: str,
         unit: str,
         value_type: Type[metrics_api.ValueT],
-        metric_type: Type[metrics_api.MetricT],
         enabled: bool = True,
-    ) -> metrics_api.MetricT:
-        """See `opentelemetry.metrics.Meter.create_metric`."""
-        # Ignore type b/c of mypy bug in addition to missing annotations
-        metric = metric_type(  # type: ignore
+    ) -> metrics_api.Counter:
+        """See `opentelemetry.metrics.Meter.create_counter`."""
+        counter = Counter(
             name, description, unit, value_type, self, enabled=enabled
         )
         with self.metrics_lock:
-            self.metrics.add(metric)
-        return metric
+            self.metrics.add(counter)
+        return counter
 
-    def register_observer(
+    def create_updowncounter(
+        self,
+        name: str,
+        description: str,
+        unit: str,
+        value_type: Type[metrics_api.ValueT],
+        enabled: bool = True,
+    ) -> metrics_api.UpDownCounter:
+        """See `opentelemetry.metrics.Meter.create_updowncounter`."""
+        counter = UpDownCounter(
+            name, description, unit, value_type, self, enabled=enabled
+        )
+        with self.metrics_lock:
+            self.metrics.add(counter)
+        return counter
+
+    def create_valuerecorder(
+        self,
+        name: str,
+        description: str,
+        unit: str,
+        value_type: Type[metrics_api.ValueT],
+        enabled: bool = True,
+    ) -> metrics_api.ValueRecorder:
+        """See `opentelemetry.metrics.Meter.create_valuerecorder`."""
+        recorder = ValueRecorder(
+            name, description, unit, value_type, self, enabled=enabled
+        )
+        with self.metrics_lock:
+            self.metrics.add(recorder)
+        return recorder
+
+    def register_sumobserver(
         self,
         callback: metrics_api.ObserverCallbackT,
         name: str,
         description: str,
         unit: str,
         value_type: Type[metrics_api.ValueT],
-        observer_type=Type[metrics_api.ObserverT],
         label_keys: Sequence[str] = (),
         enabled: bool = True,
-    ) -> metrics_api.Observer:
-        ob = observer_type(
+    ) -> metrics_api.SumObserver:
+        ob = SumObserver(
+            callback, name, description, unit, value_type, label_keys, enabled
+        )
+        with self.observers_lock:
+            self.observers.add(ob)
+        return ob
+
+    def register_updownsumobserver(
+        self,
+        callback: metrics_api.ObserverCallbackT,
+        name: str,
+        description: str,
+        unit: str,
+        value_type: Type[metrics_api.ValueT],
+        label_keys: Sequence[str] = (),
+        enabled: bool = True,
+    ) -> metrics_api.UpDownSumObserver:
+        ob = UpDownSumObserver(
+            callback, name, description, unit, value_type, label_keys, enabled
+        )
+        with self.observers_lock:
+            self.observers.add(ob)
+        return ob
+
+    def register_valueobserver(
+        self,
+        callback: metrics_api.ObserverCallbackT,
+        name: str,
+        description: str,
+        unit: str,
+        value_type: Type[metrics_api.ValueT],
+        label_keys: Sequence[str] = (),
+        enabled: bool = True,
+    ) -> metrics_api.ValueObserver:
+        ob = ValueObserver(
             callback, name, description, unit, value_type, label_keys, enabled
         )
         with self.observers_lock:
@@ -478,7 +541,7 @@ class MeterProvider(metrics_api.MeterProvider):
     def __init__(
         self,
         stateful=True,
-        resource: Resource = Resource.create_empty(),
+        resource: Resource = Resource.create({}),
         shutdown_on_exit: bool = True,
     ):
         self.stateful = stateful

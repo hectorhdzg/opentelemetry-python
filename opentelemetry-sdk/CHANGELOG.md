@@ -2,7 +2,92 @@
 
 ## Unreleased
 
+- Add optional parameter to `record_exception` method ([#1314](https://github.com/open-telemetry/opentelemetry-python/pull/1314))
+
+## Version 0.15b0
+
+Released 2020-11-02
+
+- Make `SpanProcessor.on_start` accept parent Context
+  ([#1251](https://github.com/open-telemetry/opentelemetry-python/pull/1251))
+- Fix b3 propagator entrypoint
+  ([#1265](https://github.com/open-telemetry/opentelemetry-python/pull/1265))
+- Allow None in sequence attributes values
+  ([#998](https://github.com/open-telemetry/opentelemetry-python/pull/998))
+- Samplers to accept parent Context
+  ([#1267](https://github.com/open-telemetry/opentelemetry-python/pull/1267))
+- Updating status codes to adhere to spec
+  ([#1282](https://github.com/open-telemetry/opentelemetry-python/pull/1282))
+- Span.is_recording() returns false after span has ended
+  ([#1289](https://github.com/open-telemetry/opentelemetry-python/pull/1289))
+- Set initial checkpoint timestamp in aggregators
+  ([#1237](https://github.com/open-telemetry/opentelemetry-python/pull/1237))
+- Allow samplers to modify tracestate
+  ([#1319](https://github.com/open-telemetry/opentelemetry-python/pull/1319))
+- Remove TracerProvider coupling from Tracer init
+  ([#1295](https://github.com/open-telemetry/opentelemetry-python/pull/1295))
+
+## Version 0.14b0
+
+Released 2020-10-13
+- Add optional parameter to `record_exception` method
+  ([#1242](https://github.com/open-telemetry/opentelemetry-python/pull/1242))
+- Add timestamps to aggregators
+  ([#1199](https://github.com/open-telemetry/opentelemetry-python/pull/1199))
+- Add Global Error Handler
+  ([#1080](https://github.com/open-telemetry/opentelemetry-python/pull/1080))
+- Update sampling result names
+  ([#1128](https://github.com/open-telemetry/opentelemetry-python/pull/1128))
+- Add support for `OTEL_BSP_MAX_QUEUE_SIZE`, `OTEL_BSP_SCHEDULE_DELAY_MILLIS`, `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` and `OTEL_BSP_EXPORT_TIMEOUT_MILLIS` environment variables
+  ([#1105](https://github.com/open-telemetry/opentelemetry-python/pull/1120))
+- Allow for Custom Trace and Span IDs Generation - `IdsGenerator` for TracerProvider
+  ([#1153](https://github.com/open-telemetry/opentelemetry-python/pull/1153))
+- Event attributes are now immutable
+  ([#1195](https://github.com/open-telemetry/opentelemetry-python/pull/1195))
+- Renaming metrics Batcher to Processor
+  ([#1203](https://github.com/open-telemetry/opentelemetry-python/pull/1203))
+- Protect access to Span implementation
+  ([#1188](https://github.com/open-telemetry/opentelemetry-python/pull/1188))
+- `start_as_current_span` and `use_span` can now optionally auto-record any exceptions raised inside the context manager.
+  ([#1162](https://github.com/open-telemetry/opentelemetry-python/pull/1162))
+- Adding Resource to MeterRecord
+  ([#1209](https://github.com/open-telemetry/opentelemetry-python/pull/1209))
+- Parent is now always passed in via Context, intead of Span or SpanContext
+  ([#1146](https://github.com/open-telemetry/opentelemetry-python/pull/1146))
+- Add keys method to TextMap propagator Getter
+  ([#1196](https://github.com/open-telemetry/opentelemetry-python/issues/1196))
+
+## Version 0.13b0
+
+Released 2020-09-17
+
+- Moved samplers from API to SDK
+  ([#1023](https://github.com/open-telemetry/opentelemetry-python/pull/1023))
+- Sampling spec changes
+  ([#1034](https://github.com/open-telemetry/opentelemetry-python/pull/1034))
+- Remove lazy Event and Link API from Span interface
+  ([#1045](https://github.com/open-telemetry/opentelemetry-python/pull/1045))
+- Improve BatchExportSpanProcessor
+  ([#1062](https://github.com/open-telemetry/opentelemetry-python/pull/1062))
+- Populate resource attributes as per semantic conventions
+  ([#1053](https://github.com/open-telemetry/opentelemetry-python/pull/1053))
+- Rename Resource labels to attributes
+  ([#1082](https://github.com/open-telemetry/opentelemetry-python/pull/1082))
+- Fix api/sdk setup.cfg to include missing python files
+  ([#1091](https://github.com/open-telemetry/opentelemetry-python/pull/1091))
+- Drop support for Python 3.4
+  ([#1099](https://github.com/open-telemetry/opentelemetry-python/pull/1099))
+- Rename members of `trace.sampling.Decision` enum
+  ([#1115](https://github.com/open-telemetry/opentelemetry-python/pull/1115))
+- Merge `OTELResourceDetector` result when creating resources
+  ([#1096](https://github.com/open-telemetry/opentelemetry-python/pull/1096))
+
+## Version 0.12b0
+
+Released 2020-08-14
+
 - Changed default Sampler to `ParentOrElse(AlwaysOn)`
+  ([#960](https://github.com/open-telemetry/opentelemetry-python/pull/960))
 - Update environment variable names, prefix changed from `OPENTELEMETRY` to `OTEL`
   ([#904](https://github.com/open-telemetry/opentelemetry-python/pull/904))
 - Implement Views in metrics SDK

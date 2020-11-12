@@ -1,5 +1,4 @@
 # Copyright The OpenTelemetry Authors
-#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -15,28 +14,25 @@
 """OTLP Span Exporter"""
 
 import logging
-from collections.abc import Mapping, Sequence
-from time import sleep
-from typing import Sequence as TypingSequence
+import os
+from typing import Optional, Sequence
 
-from backoff import expo
-from google.rpc.error_details_pb2 import RetryInfo
-from grpc import (
-    ChannelCredentials,
-    RpcError,
-    StatusCode,
-    insecure_channel,
-    secure_channel,
+from grpc import ChannelCredentials
+
+from opentelemetry.configuration import Configuration
+from opentelemetry.exporter.otlp.exporter import (
+    OTLPExporterMixin,
+    _get_resource_data,
+    _load_credential_from_file,
+    _translate_key_values,
 )
-
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
     ExportTraceServiceRequest,
 )
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2_grpc import (
     TraceServiceStub,
 )
-from opentelemetry.proto.common.v1.common_pb2 import AnyValue, KeyValue
-from opentelemetry.proto.resource.v1.resource_pb2 import Resource
+from opentelemetry.proto.common.v1.common_pb2 import InstrumentationLibrary
 from opentelemetry.proto.trace.v1.trace_pb2 import (
     InstrumentationLibrarySpans,
     ResourceSpans,
@@ -45,94 +41,90 @@ from opentelemetry.proto.trace.v1.trace_pb2 import Span as CollectorSpan
 from opentelemetry.proto.trace.v1.trace_pb2 import Status
 from opentelemetry.sdk.trace import Span as SDKSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+from opentelemetry.trace.status import StatusCode
 
 logger = logging.getLogger(__name__)
 
 
-def _translate_key_values(key, value):
-
-    if isinstance(value, bool):
-        any_value = AnyValue(bool_value=value)
-
-    elif isinstance(value, str):
-        any_value = AnyValue(string_value=value)
-
-    elif isinstance(value, int):
-        any_value = AnyValue(int_value=value)
-
-    elif isinstance(value, float):
-        any_value = AnyValue(double_value=value)
-
-    elif isinstance(value, Sequence):
-        any_value = AnyValue(array_value=value)
-
-    elif isinstance(value, Mapping):
-        any_value = AnyValue(kvlist_value=value)
-
-    else:
-        raise Exception(
-            "Invalid type {} of value {}".format(type(value), value)
-        )
-
-    return KeyValue(key=key, value=any_value)
-
-
 # pylint: disable=no-member
-class OTLPSpanExporter(SpanExporter):
+class OTLPSpanExporter(
+    SpanExporter,
+    OTLPExporterMixin[SDKSpan, ExportTraceServiceRequest, SpanExportResult],
+):
+    # pylint: disable=unsubscriptable-object
     """OTLP span exporter
 
     Args:
         endpoint: OpenTelemetry Collector receiver endpoint
+        insecure: Connection type
         credentials: Credentials object for server authentication
-        metadata: Metadata to send when exporting
+        headers: Headers to send when exporting
+        timeout: Backend request timeout in seconds
     """
+
+    _result = SpanExportResult
+    _stub = TraceServiceStub
 
     def __init__(
         self,
-        endpoint="localhost:55680",
-        credentials: ChannelCredentials = None,
-        metadata=None,
+        endpoint: Optional[str] = None,
+        insecure: Optional[bool] = None,
+        credentials: Optional[ChannelCredentials] = None,
+        headers: Optional[str] = None,
+        timeout: Optional[int] = None,
     ):
-        super().__init__()
+        if insecure is None:
+            insecure = Configuration().EXPORTER_OTLP_SPAN_INSECURE
 
-        self._metadata = metadata
-        self._collector_span_kwargs = None
-
-        if credentials is None:
-            self._client = TraceServiceStub(insecure_channel(endpoint))
-        else:
-            self._client = TraceServiceStub(
-                secure_channel(endpoint, credentials)
+        if (
+            not insecure
+            and Configuration().EXPORTER_OTLP_SPAN_CERTIFICATE is not None
+        ):
+            credentials = credentials or _load_credential_from_file(
+                Configuration().EXPORTER_OTLP_SPAN_CERTIFICATE
             )
 
-    def _translate_name(self, sdk_span):
+        super().__init__(
+            **{
+                "endpoint": endpoint
+                or Configuration().EXPORTER_OTLP_SPAN_ENDPOINT,
+                "insecure": insecure,
+                "credentials": credentials,
+                "headers": headers
+                or Configuration().EXPORTER_OTLP_SPAN_HEADERS,
+                "timeout": timeout
+                or Configuration().EXPORTER_OTLP_SPAN_TIMEOUT,
+            }
+        )
+
+    def _translate_name(self, sdk_span: SDKSpan) -> None:
         self._collector_span_kwargs["name"] = sdk_span.name
 
-    def _translate_start_time(self, sdk_span):
+    def _translate_start_time(self, sdk_span: SDKSpan) -> None:
         self._collector_span_kwargs[
             "start_time_unix_nano"
         ] = sdk_span.start_time
 
-    def _translate_end_time(self, sdk_span):
+    def _translate_end_time(self, sdk_span: SDKSpan) -> None:
         self._collector_span_kwargs["end_time_unix_nano"] = sdk_span.end_time
 
-    def _translate_span_id(self, sdk_span):
+    def _translate_span_id(self, sdk_span: SDKSpan) -> None:
         self._collector_span_kwargs[
             "span_id"
         ] = sdk_span.context.span_id.to_bytes(8, "big")
 
-    def _translate_trace_id(self, sdk_span):
+    def _translate_trace_id(self, sdk_span: SDKSpan) -> None:
         self._collector_span_kwargs[
             "trace_id"
         ] = sdk_span.context.trace_id.to_bytes(16, "big")
 
-    def _translate_parent(self, sdk_span):
+    def _translate_parent(self, sdk_span: SDKSpan) -> None:
         if sdk_span.parent is not None:
             self._collector_span_kwargs[
                 "parent_span_id"
             ] = sdk_span.parent.span_id.to_bytes(8, "big")
 
-    def _translate_context_trace_state(self, sdk_span):
+    def _translate_context_trace_state(self, sdk_span: SDKSpan) -> None:
         if sdk_span.context.trace_state is not None:
             self._collector_span_kwargs["trace_state"] = ",".join(
                 [
@@ -141,7 +133,7 @@ class OTLPSpanExporter(SpanExporter):
                 ]
             )
 
-    def _translate_attributes(self, sdk_span):
+    def _translate_attributes(self, sdk_span: SDKSpan) -> None:
         if sdk_span.attributes:
 
             self._collector_span_kwargs["attributes"] = []
@@ -155,7 +147,7 @@ class OTLPSpanExporter(SpanExporter):
                 except Exception as error:  # pylint: disable=broad-except
                     logger.exception(error)
 
-    def _translate_events(self, sdk_span):
+    def _translate_events(self, sdk_span: SDKSpan) -> None:
         if sdk_span.events:
             self._collector_span_kwargs["events"] = []
 
@@ -179,7 +171,7 @@ class OTLPSpanExporter(SpanExporter):
                     collector_span_event
                 )
 
-    def _translate_links(self, sdk_span):
+    def _translate_links(self, sdk_span: SDKSpan) -> None:
         if sdk_span.links:
             self._collector_span_kwargs["links"] = []
 
@@ -205,27 +197,44 @@ class OTLPSpanExporter(SpanExporter):
                     collector_span_link
                 )
 
-    def _translate_status(self, sdk_span):
+    def _translate_status(self, sdk_span: SDKSpan) -> None:
         if sdk_span.status is not None:
+            # TODO: Update this when the proto definitions are updated to include UNSET and ERROR
+            proto_status_code = Status.STATUS_CODE_OK
+            if sdk_span.status.status_code is StatusCode.ERROR:
+                proto_status_code = Status.STATUS_CODE_UNKNOWN_ERROR
             self._collector_span_kwargs["status"] = Status(
-                code=sdk_span.status.canonical_code.value,
-                message=sdk_span.status.description,
+                code=proto_status_code, message=sdk_span.status.description,
             )
 
-    def _translate_spans(
-        self, sdk_spans: TypingSequence[SDKSpan],
+    def _translate_data(
+        self, data: Sequence[SDKSpan]
     ) -> ExportTraceServiceRequest:
+        # pylint: disable=attribute-defined-outside-init
 
         sdk_resource_instrumentation_library_spans = {}
 
-        for sdk_span in sdk_spans:
+        for sdk_span in data:
 
             if sdk_span.resource not in (
                 sdk_resource_instrumentation_library_spans.keys()
             ):
+                if sdk_span.instrumentation_info is not None:
+                    instrumentation_library_spans = InstrumentationLibrarySpans(
+                        instrumentation_library=InstrumentationLibrary(
+                            name=sdk_span.instrumentation_info.name,
+                            version=sdk_span.instrumentation_info.version,
+                        )
+                    )
+
+                else:
+                    instrumentation_library_spans = (
+                        InstrumentationLibrarySpans()
+                    )
+
                 sdk_resource_instrumentation_library_spans[
                     sdk_span.resource
-                ] = InstrumentationLibrarySpans()
+                ] = instrumentation_library_spans
 
             self._collector_span_kwargs = {}
 
@@ -242,99 +251,21 @@ class OTLPSpanExporter(SpanExporter):
             self._translate_status(sdk_span)
 
             self._collector_span_kwargs["kind"] = getattr(
-                CollectorSpan.SpanKind, sdk_span.kind.name
+                CollectorSpan.SpanKind,
+                "SPAN_KIND_{}".format(sdk_span.kind.name),
             )
 
             sdk_resource_instrumentation_library_spans[
                 sdk_span.resource
             ].spans.append(CollectorSpan(**self._collector_span_kwargs))
 
-        resource_spans = []
-
-        for (
-            sdk_resource,
-            instrumentation_library_spans,
-        ) in sdk_resource_instrumentation_library_spans.items():
-
-            collector_resource = Resource()
-
-            for key, value in sdk_resource.labels.items():
-
-                try:
-                    collector_resource.attributes.append(
-                        _translate_key_values(key, value)
-                    )
-                except Exception as error:  # pylint: disable=broad-except
-                    logger.exception(error)
-
-            resource_spans.append(
-                ResourceSpans(
-                    resource=collector_resource,
-                    instrumentation_library_spans=[
-                        instrumentation_library_spans
-                    ],
-                )
+        return ExportTraceServiceRequest(
+            resource_spans=_get_resource_data(
+                sdk_resource_instrumentation_library_spans,
+                ResourceSpans,
+                "spans",
             )
+        )
 
-        return ExportTraceServiceRequest(resource_spans=resource_spans)
-
-    def export(self, spans: TypingSequence[SDKSpan]) -> SpanExportResult:
-        # expo returns a generator that yields delay values which grow
-        # exponentially. Once delay is greater than max_value, the yielded
-        # value will remain constant.
-        # max_value is set to 900 (900 seconds is 15 minutes) to use the same
-        # value as used in the Go implementation.
-
-        max_value = 900
-
-        for delay in expo(max_value=max_value):
-
-            if delay == max_value:
-                return SpanExportResult.FAILURE
-
-            try:
-                self._client.Export(
-                    request=self._translate_spans(spans),
-                    metadata=self._metadata,
-                )
-
-                return SpanExportResult.SUCCESS
-
-            except RpcError as error:
-
-                if error.code() in [
-                    StatusCode.CANCELLED,
-                    StatusCode.DEADLINE_EXCEEDED,
-                    StatusCode.PERMISSION_DENIED,
-                    StatusCode.UNAUTHENTICATED,
-                    StatusCode.RESOURCE_EXHAUSTED,
-                    StatusCode.ABORTED,
-                    StatusCode.OUT_OF_RANGE,
-                    StatusCode.UNAVAILABLE,
-                    StatusCode.DATA_LOSS,
-                ]:
-
-                    retry_info_bin = dict(error.trailing_metadata()).get(
-                        "google.rpc.retryinfo-bin"
-                    )
-                    if retry_info_bin is not None:
-                        retry_info = RetryInfo()
-                        retry_info.ParseFromString(retry_info_bin)
-                        delay = (
-                            retry_info.retry_delay.seconds
-                            + retry_info.retry_delay.nanos / 1.0e9
-                        )
-
-                    logger.debug("Waiting %ss before retrying export of span")
-                    sleep(delay)
-                    continue
-
-                if error.code() == StatusCode.OK:
-                    return SpanExportResult.SUCCESS
-
-                return SpanExportResult.FAILURE
-
-        return SpanExportResult.FAILURE
-
-    def shutdown(self):
-        pass
+    def export(self, spans: Sequence[SDKSpan]) -> SpanExportResult:
+        return self._export(spans)

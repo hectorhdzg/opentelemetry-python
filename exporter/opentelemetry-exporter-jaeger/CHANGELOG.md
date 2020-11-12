@@ -2,8 +2,30 @@
 
 ## Unreleased
 
+## Version 0.15b0
+
+Released 2020-11-02
+- Add support for Jaeger Span Exporter configuration by environment variables and<br/>
+  change JaegerSpanExporter constructor parameters
+  ([#1114](https://github.com/open-telemetry/opentelemetry-python/pull/1114)) 
+
+## Version 0.13b0
+
+Released 2020-09-17
+- Drop support for Python 3.4
+  ([#1099](https://github.com/open-telemetry/opentelemetry-python/pull/1099))
+- Report instrumentation info
+  ([#1098](https://github.com/open-telemetry/opentelemetry-python/pull/1098))
+
+## Version 0.12b0
+
+Released 2020-08-14
+
 - Change package name to opentelemetry-exporter-jaeger
   ([#953](https://github.com/open-telemetry/opentelemetry-python/pull/953))
+
+- Thrift URL for Jaeger exporter doesn't allow HTTPS (hardcoded to HTTP)
+  ([#978] (https://github.com/open-telemetry/opentelemetry-python/pull/978))
 
 ## 0.8b0
 

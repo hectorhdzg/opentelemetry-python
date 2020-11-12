@@ -6,9 +6,9 @@ Submodules
 
 .. toctree::
 
-   trace.sampling
    trace.status
    trace.span
+   trace.ids_generator
 
 Module contents
 ---------------

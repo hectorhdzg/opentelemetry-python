@@ -20,10 +20,13 @@ from unittest import mock
 # pylint:disable=import-error
 import opentelemetry.exporter.jaeger as jaeger_exporter
 from opentelemetry import trace as trace_api
+from opentelemetry.configuration import Configuration
 from opentelemetry.exporter.jaeger.gen.jaeger import ttypes as jaeger
 from opentelemetry.sdk import trace
 from opentelemetry.sdk.trace import Resource
-from opentelemetry.trace.status import Status, StatusCanonicalCode
+from opentelemetry.sdk.util.instrumentation import InstrumentationInfo
+from opentelemetry.trace import SpanKind
+from opentelemetry.trace.status import Status, StatusCode
 
 
 class TestJaegerSpanExporter(unittest.TestCase):
@@ -35,25 +38,21 @@ class TestJaegerSpanExporter(unittest.TestCase):
             is_remote=False,
         )
 
-        self._test_span = trace.Span("test_span", context=context)
+        self._test_span = trace._Span("test_span", context=context)
         self._test_span.start()
         self._test_span.end()
 
     def test_constructor_default(self):
         """Test the default values assigned by constructor."""
         service_name = "my-service-name"
-        host_name = "localhost"
-        thrift_port = None
+        agent_host_name = "localhost"
         agent_port = 6831
-        collector_endpoint = "/api/traces?format=jaeger.thrift"
         exporter = jaeger_exporter.JaegerSpanExporter(service_name)
 
         self.assertEqual(exporter.service_name, service_name)
-        self.assertEqual(exporter.collector_host_name, None)
-        self.assertEqual(exporter.agent_host_name, host_name)
+        self.assertEqual(exporter.agent_host_name, agent_host_name)
         self.assertEqual(exporter.agent_port, agent_port)
-        self.assertEqual(exporter.collector_port, thrift_port)
-        self.assertEqual(exporter.collector_endpoint, collector_endpoint)
+        self.assertEqual(exporter.collector_endpoint, None)
         self.assertEqual(exporter.username, None)
         self.assertEqual(exporter.password, None)
         self.assertTrue(exporter.collector is None)
@@ -62,9 +61,7 @@ class TestJaegerSpanExporter(unittest.TestCase):
     def test_constructor_explicit(self):
         """Test the constructor passing all the options."""
         service = "my-opentelemetry-jaeger"
-        collector_host_name = "opentelemetry.io"
-        collector_port = 15875
-        collector_endpoint = "/myapi/traces?format=jaeger.thrift"
+        collector_endpoint = "https://opentelemetry.io:15875"
 
         agent_port = 14268
         agent_host_name = "opentelemetry.io"
@@ -75,19 +72,16 @@ class TestJaegerSpanExporter(unittest.TestCase):
 
         exporter = jaeger_exporter.JaegerSpanExporter(
             service_name=service,
-            collector_host_name=collector_host_name,
-            collector_port=collector_port,
-            collector_endpoint=collector_endpoint,
             agent_host_name=agent_host_name,
             agent_port=agent_port,
+            collector_endpoint=collector_endpoint,
             username=username,
             password=password,
         )
+
         self.assertEqual(exporter.service_name, service)
         self.assertEqual(exporter.agent_host_name, agent_host_name)
         self.assertEqual(exporter.agent_port, agent_port)
-        self.assertEqual(exporter.collector_host_name, collector_host_name)
-        self.assertEqual(exporter.collector_port, collector_port)
         self.assertTrue(exporter.collector is not None)
         self.assertEqual(exporter.collector.auth, auth)
         # property should not construct new object
@@ -101,6 +95,55 @@ class TestJaegerSpanExporter(unittest.TestCase):
         self.assertNotEqual(exporter.collector, collector)
         self.assertTrue(exporter.collector.auth is None)
 
+    def test_constructor_by_environment_variables(self):
+        """Test the constructor using Environment Variables."""
+        service = "my-opentelemetry-jaeger"
+
+        agent_host_name = "opentelemetry.io"
+        agent_port = "6831"
+
+        collector_endpoint = "https://opentelemetry.io:15875"
+
+        username = "username"
+        password = "password"
+        auth = (username, password)
+
+        environ_patcher = mock.patch.dict(
+            "os.environ",
+            {
+                "OTEL_EXPORTER_JAEGER_AGENT_HOST": agent_host_name,
+                "OTEL_EXPORTER_JAEGER_AGENT_PORT": agent_port,
+                "OTEL_EXPORTER_JAEGER_ENDPOINT": collector_endpoint,
+                "OTEL_EXPORTER_JAEGER_USER": username,
+                "OTEL_EXPORTER_JAEGER_PASSWORD": password,
+            },
+        )
+
+        environ_patcher.start()
+
+        exporter = jaeger_exporter.JaegerSpanExporter(service_name=service)
+
+        self.assertEqual(exporter.service_name, service)
+        self.assertEqual(exporter.agent_host_name, agent_host_name)
+        self.assertEqual(exporter.agent_port, int(agent_port))
+        self.assertTrue(exporter.collector is not None)
+        self.assertEqual(exporter.collector_endpoint, collector_endpoint)
+        self.assertEqual(exporter.collector.auth, auth)
+        # property should not construct new object
+        collector = exporter.collector
+        self.assertEqual(exporter.collector, collector)
+        # property should construct new object
+        # pylint: disable=protected-access
+        exporter._collector = None
+        exporter.username = None
+        exporter.password = None
+        self.assertNotEqual(exporter.collector, collector)
+        self.assertTrue(exporter.collector.auth is None)
+
+        environ_patcher.stop()
+
+        Configuration._reset()
+
     def test_nsec_to_usec_round(self):
         # pylint: disable=protected-access
         nsec_to_usec_round = jaeger_exporter._nsec_to_usec_round
@@ -108,6 +151,10 @@ class TestJaegerSpanExporter(unittest.TestCase):
         self.assertEqual(nsec_to_usec_round(5000), 5)
         self.assertEqual(nsec_to_usec_round(5499), 5)
         self.assertEqual(nsec_to_usec_round(5500), 6)
+
+    def test_all_otlp_span_kinds_are_mapped(self):
+        for kind in SpanKind:
+            self.assertIn(kind, jaeger_exporter.OTLP_JAEGER_SPAN_KIND)
 
     # pylint: disable=too-many-locals
     def test_translate_to_jaeger(self):
@@ -138,7 +185,7 @@ class TestJaegerSpanExporter(unittest.TestCase):
         span_context = trace_api.SpanContext(
             trace_id, span_id, is_remote=False
         )
-        parent_context = trace_api.SpanContext(
+        parent_span_context = trace_api.SpanContext(
             trace_id, parent_id, is_remote=False
         )
         other_context = trace_api.SpanContext(
@@ -168,31 +215,31 @@ class TestJaegerSpanExporter(unittest.TestCase):
             jaeger.Tag(
                 key="status.code",
                 vType=jaeger.TagType.LONG,
-                vLong=StatusCanonicalCode.OK.value,
+                vLong=StatusCode.UNSET.value,
             ),
             jaeger.Tag(
                 key="status.message", vType=jaeger.TagType.STRING, vStr=None
             ),
             jaeger.Tag(
-                key="span.kind",
-                vType=jaeger.TagType.STRING,
-                vStr=trace_api.SpanKind.INTERNAL.name,
+                key="span.kind", vType=jaeger.TagType.STRING, vStr="internal",
             ),
         ]
 
         otel_spans = [
-            trace.Span(
+            trace._Span(
                 name=span_names[0],
                 context=span_context,
-                parent=parent_context,
+                parent=parent_span_context,
                 events=(event,),
                 links=(link,),
                 kind=trace_api.SpanKind.CLIENT,
             ),
-            trace.Span(
-                name=span_names[1], context=parent_context, parent=None
+            trace._Span(
+                name=span_names[1], context=parent_span_context, parent=None
             ),
-            trace.Span(name=span_names[2], context=other_context, parent=None),
+            trace._Span(
+                name=span_names[2], context=other_context, parent=None
+            ),
         ]
 
         otel_spans[0].start(start_time=start_times[0])
@@ -202,18 +249,24 @@ class TestJaegerSpanExporter(unittest.TestCase):
         otel_spans[0].set_attribute("key_float", 111.22)
         otel_spans[0].set_attribute("key_tuple", ("tuple_element",))
         otel_spans[0].resource = Resource(
-            labels={"key_resource": "some_resource"}
+            attributes={"key_resource": "some_resource"}
         )
         otel_spans[0].set_status(
-            Status(StatusCanonicalCode.UNKNOWN, "Example description")
+            Status(StatusCode.ERROR, "Example description")
         )
         otel_spans[0].end(end_time=end_times[0])
 
         otel_spans[1].start(start_time=start_times[1])
+        otel_spans[1].resource = Resource({})
         otel_spans[1].end(end_time=end_times[1])
 
         otel_spans[2].start(start_time=start_times[2])
+        otel_spans[2].resource = Resource({})
+        otel_spans[2].set_status(Status(StatusCode.OK, "Example description"))
         otel_spans[2].end(end_time=end_times[2])
+        otel_spans[2].instrumentation_info = InstrumentationInfo(
+            name="name", version="version"
+        )
 
         # pylint: disable=protected-access
         spans = jaeger_exporter._translate_to_jaeger(otel_spans)
@@ -255,7 +308,7 @@ class TestJaegerSpanExporter(unittest.TestCase):
                     jaeger.Tag(
                         key="status.code",
                         vType=jaeger.TagType.LONG,
-                        vLong=StatusCanonicalCode.UNKNOWN.value,
+                        vLong=StatusCode.ERROR.value,
                     ),
                     jaeger.Tag(
                         key="status.message",
@@ -265,7 +318,7 @@ class TestJaegerSpanExporter(unittest.TestCase):
                     jaeger.Tag(
                         key="span.kind",
                         vType=jaeger.TagType.STRING,
-                        vStr=trace_api.SpanKind.CLIENT.name,
+                        vStr="client",
                     ),
                     jaeger.Tag(
                         key="error", vType=jaeger.TagType.BOOL, vBool=True
@@ -327,7 +380,33 @@ class TestJaegerSpanExporter(unittest.TestCase):
                 startTime=start_times[2] // 10 ** 3,
                 duration=durations[2] // 10 ** 3,
                 flags=0,
-                tags=default_tags,
+                tags=[
+                    jaeger.Tag(
+                        key="status.code",
+                        vType=jaeger.TagType.LONG,
+                        vLong=StatusCode.OK.value,
+                    ),
+                    jaeger.Tag(
+                        key="status.message",
+                        vType=jaeger.TagType.STRING,
+                        vStr="Example description",
+                    ),
+                    jaeger.Tag(
+                        key="span.kind",
+                        vType=jaeger.TagType.STRING,
+                        vStr="internal",
+                    ),
+                    jaeger.Tag(
+                        key="otel.instrumentation_library.name",
+                        vType=jaeger.TagType.STRING,
+                        vStr="name",
+                    ),
+                    jaeger.Tag(
+                        key="otel.instrumentation_library.version",
+                        vType=jaeger.TagType.STRING,
+                        vStr="version",
+                    ),
+                ],
             ),
         ]
 
@@ -362,7 +441,7 @@ class TestJaegerSpanExporter(unittest.TestCase):
         exporter._collector = collector_mock
 
         exporter.export((self._test_span,))
-        self.assertEqual(agent_client_mock.emit.call_count, 2)
+        self.assertEqual(agent_client_mock.emit.call_count, 1)
         self.assertEqual(collector_mock.submit.call_count, 1)
 
     def test_agent_client(self):

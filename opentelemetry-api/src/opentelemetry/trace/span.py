@@ -1,9 +1,12 @@
 import abc
+import logging
 import types as python_types
 import typing
 
 from opentelemetry.trace.status import Status
 from opentelemetry.util import types
+
+_logger = logging.getLogger(__name__)
 
 
 class Span(abc.ABC):
@@ -20,7 +23,7 @@ class Span(abc.ABC):
         """
 
     @abc.abstractmethod
-    def get_context(self) -> "SpanContext":
+    def get_span_context(self) -> "SpanContext":
         """Gets the span's SpanContext.
 
         Get an immutable, serializable identifier for this span that can be
@@ -35,6 +38,8 @@ class Span(abc.ABC):
         """Sets an Attribute.
 
         Sets a single Attribute with the key and value passed as arguments.
+
+        Note: The behavior of `None` value attributes is undefined, and hence strongly discouraged.
         """
 
     @abc.abstractmethod
@@ -52,19 +57,6 @@ class Span(abc.ABC):
         """
 
     @abc.abstractmethod
-    def add_lazy_event(
-        self,
-        name: str,
-        event_formatter: types.AttributesFormatter,
-        timestamp: typing.Optional[int] = None,
-    ) -> None:
-        """Adds an `Event`.
-        Adds a single `Event` with the name, an event formatter that calculates
-        the attributes lazily and, optionally, a timestamp. Implementations
-        should generate a timestamp if the `timestamp` argument is omitted.
-        """
-
-    @abc.abstractmethod
     def update_name(self, name: str) -> None:
         """Updates the `Span` name.
 
@@ -75,7 +67,7 @@ class Span(abc.ABC):
         """
 
     @abc.abstractmethod
-    def is_recording_events(self) -> bool:
+    def is_recording(self) -> bool:
         """Returns whether this span will be recorded.
 
         Returns true if this Span is active and recording information like
@@ -89,7 +81,12 @@ class Span(abc.ABC):
         """
 
     @abc.abstractmethod
-    def record_exception(self, exception: Exception) -> None:
+    def record_exception(
+        self,
+        exception: Exception,
+        attributes: types.Attributes = None,
+        timestamp: typing.Optional[int] = None,
+    ) -> None:
         """Records an exception as a span event."""
 
     def __enter__(self) -> "Span":
@@ -156,7 +153,9 @@ class TraceState(typing.Dict[str, str]):
 DEFAULT_TRACE_STATE = TraceState.get_default()
 
 
-class SpanContext:
+class SpanContext(
+    typing.Tuple[int, int, bool, "TraceFlags", "TraceState", bool]
+):
     """The state of a Span to propagate between processes.
 
     This class includes the immutable attributes of a :class:`.Span` that must
@@ -170,23 +169,59 @@ class SpanContext:
         is_remote: True if propagated from a remote parent.
     """
 
-    def __init__(
-        self,
+    def __new__(
+        cls,
         trace_id: int,
         span_id: int,
         is_remote: bool,
         trace_flags: "TraceFlags" = DEFAULT_TRACE_OPTIONS,
         trace_state: "TraceState" = DEFAULT_TRACE_STATE,
-    ) -> None:
+    ) -> "SpanContext":
         if trace_flags is None:
             trace_flags = DEFAULT_TRACE_OPTIONS
         if trace_state is None:
             trace_state = DEFAULT_TRACE_STATE
-        self.trace_id = trace_id
-        self.span_id = span_id
-        self.trace_flags = trace_flags
-        self.trace_state = trace_state
-        self.is_remote = is_remote
+
+        is_valid = trace_id != INVALID_TRACE_ID and span_id != INVALID_SPAN_ID
+
+        return tuple.__new__(
+            cls,
+            (trace_id, span_id, is_remote, trace_flags, trace_state, is_valid),
+        )
+
+    @property
+    def trace_id(self) -> int:
+        return self[0]  # pylint: disable=unsubscriptable-object
+
+    @property
+    def span_id(self) -> int:
+        return self[1]  # pylint: disable=unsubscriptable-object
+
+    @property
+    def is_remote(self) -> bool:
+        return self[2]  # pylint: disable=unsubscriptable-object
+
+    @property
+    def trace_flags(self) -> "TraceFlags":
+        return self[3]  # pylint: disable=unsubscriptable-object
+
+    @property
+    def trace_state(self) -> "TraceState":
+        return self[4]  # pylint: disable=unsubscriptable-object
+
+    @property
+    def is_valid(self) -> bool:
+        return self[5]  # pylint: disable=unsubscriptable-object
+
+    def __setattr__(self, *args: str) -> None:
+        _logger.debug(
+            "Immutable type, ignoring call to set attribute", stack_info=True
+        )
+
+    def __delattr__(self, *args: str) -> None:
+        _logger.debug(
+            "Immutable type, ignoring call to set attribute", stack_info=True
+        )
 
     def __repr__(self) -> str:
         return (
@@ -199,20 +234,6 @@ class SpanContext:
             self.is_remote,
         )
 
-    def is_valid(self) -> bool:
-        """Get whether this `SpanContext` is valid.
-
-        A `SpanContext` is said to be invalid if its trace ID or span ID is
-        invalid (i.e. ``0``).
-
-        Returns:
-            True if the `SpanContext` is valid, false otherwise.
-        """
-        return (
-            self.trace_id != INVALID_TRACE_ID
-            and self.span_id != INVALID_SPAN_ID
-        )
-
 
 class DefaultSpan(Span):
     """The default Span that is used when no Span implementation is available.
@@ -223,10 +244,10 @@ class DefaultSpan(Span):
     def __init__(self, context: "SpanContext") -> None:
         self._context = context
 
-    def get_context(self) -> "SpanContext":
+    def get_span_context(self) -> "SpanContext":
         return self._context
 
-    def is_recording_events(self) -> bool:
+    def is_recording(self) -> bool:
         return False
 
     def end(self, end_time: typing.Optional[int] = None) -> None:
@@ -243,21 +264,18 @@ class DefaultSpan(Span):
     ) -> None:
         pass
 
-    def add_lazy_event(
-        self,
-        name: str,
-        event_formatter: types.AttributesFormatter,
-        timestamp: typing.Optional[int] = None,
-    ) -> None:
-        pass
-
     def update_name(self, name: str) -> None:
         pass
 
     def set_status(self, status: Status) -> None:
         pass
 
-    def record_exception(self, exception: Exception) -> None:
+    def record_exception(
+        self,
+        exception: Exception,
+        attributes: types.Attributes = None,
+        timestamp: typing.Optional[int] = None,
+    ) -> None:
         pass
 
 

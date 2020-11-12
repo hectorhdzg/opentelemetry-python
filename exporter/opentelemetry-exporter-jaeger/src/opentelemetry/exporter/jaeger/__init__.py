@@ -39,9 +39,7 @@ Usage
         agent_host_name='localhost',
         agent_port=6831,
         # optional: configure also collector
-        # collector_host_name='localhost',
-        # collector_port=14268,
-        # collector_endpoint='/api/traces?format=jaeger.thrift',
+        # collector_endpoint='http://localhost:14268/api/traces?format=jaeger.thrift',
         # username=xxxx, # optional
         # password=xxxx, # optional
     )
@@ -68,17 +66,25 @@ import socket
 from thrift.protocol import TBinaryProtocol, TCompactProtocol
 from thrift.transport import THttpClient, TTransport
 
-import opentelemetry.trace as trace_api
+from opentelemetry.configuration import Configuration
 from opentelemetry.exporter.jaeger.gen.agent import Agent as agent
 from opentelemetry.exporter.jaeger.gen.jaeger import Collector as jaeger
 from opentelemetry.sdk.trace.export import Span, SpanExporter, SpanExportResult
-from opentelemetry.trace.status import StatusCanonicalCode
+from opentelemetry.trace import SpanKind
+from opentelemetry.trace.status import StatusCode
 
 DEFAULT_AGENT_HOST_NAME = "localhost"
 DEFAULT_AGENT_PORT = 6831
-DEFAULT_COLLECTOR_ENDPOINT = "/api/traces?format=jaeger.thrift"
 
 UDP_PACKET_MAX_LENGTH = 65000
+
+OTLP_JAEGER_SPAN_KIND = {
+    SpanKind.CLIENT: "client",
+    SpanKind.SERVER: "server",
+    SpanKind.CONSUMER: "consumer",
+    SpanKind.PRODUCER: "producer",
+    SpanKind.INTERNAL: "internal",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -91,10 +97,7 @@ class JaegerSpanExporter(SpanExporter):
             when query for spans.
         agent_host_name: The host name of the Jaeger-Agent.
         agent_port: The port of the Jaeger-Agent.
-        collector_host_name: The host name of the Jaeger-Collector HTTP
-            Thrift.
-        collector_port: The port of the Jaeger-Collector HTTP Thrift.
-        collector_endpoint: The endpoint of the Jaeger-Collector HTTP Thrift.
+        collector_endpoint: The endpoint of the Jaeger-Collector HTTP/HTTPS Thrift.
         username: The user name of the Basic Auth if authentication is
             required.
         password: The password of the Basic Auth if authentication is
@@ -104,23 +107,39 @@ class JaegerSpanExporter(SpanExporter):
     def __init__(
         self,
         service_name,
-        agent_host_name=DEFAULT_AGENT_HOST_NAME,
-        agent_port=DEFAULT_AGENT_PORT,
-        collector_host_name=None,
-        collector_port=None,
-        collector_endpoint=DEFAULT_COLLECTOR_ENDPOINT,
+        agent_host_name=None,
+        agent_port=None,
+        collector_endpoint=None,
         username=None,
         password=None,
     ):
         self.service_name = service_name
-        self.agent_host_name = agent_host_name
-        self.agent_port = agent_port
+        self.agent_host_name = _parameter_setter(
+            param=agent_host_name,
+            env_variable=Configuration().EXPORTER_JAEGER_AGENT_HOST,
+            default=DEFAULT_AGENT_HOST_NAME,
+        )
+        self.agent_port = _parameter_setter(
+            param=agent_port,
+            env_variable=Configuration().EXPORTER_JAEGER_AGENT_PORT,
+            default=DEFAULT_AGENT_PORT,
+        )
         self._agent_client = None
-        self.collector_host_name = collector_host_name
-        self.collector_port = collector_port
-        self.collector_endpoint = collector_endpoint
-        self.username = username
-        self.password = password
+        self.collector_endpoint = _parameter_setter(
+            param=collector_endpoint,
+            env_variable=Configuration().EXPORTER_JAEGER_ENDPOINT,
+            default=None,
+        )
+        self.username = _parameter_setter(
+            param=username,
+            env_variable=Configuration().EXPORTER_JAEGER_USER,
+            default=None,
+        )
+        self.password = _parameter_setter(
+            param=password,
+            env_variable=Configuration().EXPORTER_JAEGER_PASSWORD,
+            default=None,
+        )
         self._collector = None
 
     @property
@@ -136,20 +155,16 @@ class JaegerSpanExporter(SpanExporter):
         if self._collector is not None:
             return self._collector
 
-        if self.collector_host_name is None or self.collector_port is None:
+        if self.collector_endpoint is None:
             return None
-
-        thrift_url = "http://{}:{}{}".format(
-            self.collector_host_name,
-            self.collector_port,
-            self.collector_endpoint,
-        )
 
         auth = None
         if self.username is not None and self.password is not None:
             auth = (self.username, self.password)
 
-        self._collector = Collector(thrift_url=thrift_url, auth=auth)
+        self._collector = Collector(
+            thrift_url=self.collector_endpoint, auth=auth
+        )
         return self._collector
 
     def export(self, spans):
@@ -162,12 +177,29 @@ class JaegerSpanExporter(SpanExporter):
 
         if self.collector is not None:
             self.collector.submit(batch)
-        self.agent_client.emit(batch)
+        else:
+            self.agent_client.emit(batch)
 
         return SpanExportResult.SUCCESS
 
     def shutdown(self):
         pass
+
+
+def _parameter_setter(param, env_variable, default):
+    """Returns value according to the provided data.
+
+    Args:
+        param: Constructor parameter value
+        env_variable: Environment variable related to the parameter
+        default: Constructor parameter default value
+    """
+    if param is None:
+        res = env_variable or default
+    else:
+        res = param
+
+    return res
 
 
 def _nsec_to_usec_round(nsec):
@@ -185,7 +217,7 @@ def _translate_to_jaeger(spans: Span):
     jaeger_spans = []
 
     for span in spans:
-        ctx = span.get_context()
+        ctx = span.get_span_context()
         trace_id = ctx.trace_id
         span_id = ctx.span_id
 
@@ -197,18 +229,32 @@ def _translate_to_jaeger(spans: Span):
         parent_id = span.parent.span_id if span.parent else 0
 
         tags = _extract_tags(span.attributes)
-        tags.extend(_extract_tags(span.resource.labels))
+        tags.extend(_extract_tags(span.resource.attributes))
 
         tags.extend(
             [
-                _get_long_tag("status.code", status.canonical_code.value),
+                _get_long_tag("status.code", status.status_code.value),
                 _get_string_tag("status.message", status.description),
-                _get_string_tag("span.kind", span.kind.name),
+                _get_string_tag("span.kind", OTLP_JAEGER_SPAN_KIND[span.kind]),
             ]
         )
 
+        if span.instrumentation_info is not None:
+            tags.extend(
+                [
+                    _get_string_tag(
+                        "otel.instrumentation_library.name",
+                        span.instrumentation_info.name,
+                    ),
+                    _get_string_tag(
+                        "otel.instrumentation_library.version",
+                        span.instrumentation_info.version,
+                    ),
+                ]
+            )
+
         # Ensure that if Status.Code is not OK, that we set the "error" tag on the Jaeger span.
-        if status.canonical_code is not StatusCanonicalCode.OK:
+        if not status.is_ok:
             tags.append(_get_bool_tag("error", True))
 
         refs = _extract_refs_from_span(span)

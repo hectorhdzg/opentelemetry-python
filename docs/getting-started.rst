@@ -49,7 +49,7 @@ We can run it, and see the traces print to your console:
         "start_time": "2020-05-07T14:39:52.906272Z",
         "end_time": "2020-05-07T14:39:52.906343Z",
         "status": {
-            "canonical_code": "OK"
+            "status_code": "OK"
         },
         "attributes": {},
         "events": [],
@@ -67,7 +67,7 @@ We can run it, and see the traces print to your console:
         "start_time": "2020-05-07T14:39:52.906230Z",
         "end_time": "2020-05-07T14:39:52.906601Z",
         "status": {
-            "canonical_code": "OK"
+            "status_code": "OK"
         },
         "attributes": {},
         "events": [],
@@ -85,7 +85,7 @@ We can run it, and see the traces print to your console:
         "start_time": "2020-05-07T14:39:52.906157Z",
         "end_time": "2020-05-07T14:39:52.906743Z",
         "status": {
-            "canonical_code": "OK"
+            "status_code": "OK"
         },
         "attributes": {},
         "events": [],
@@ -150,7 +150,7 @@ The above is a great example, but it's very manual. Within the telemetry space, 
 * Database calls
 
 To help instrument common scenarios, opentelemetry also has the concept of "instrumentations": packages that are designed to interface
-with a specific framework or library, such as Flask and psycopg2. A list of the currently curated extension packages can be found :scm_web:`here <ext/>`.
+with a specific framework or library, such as Flask and psycopg2. A list of the currently curated extension packages can be found `at the Contrib repo <https://github.com/open-telemetry/opentelemetry-python-contrib/tree/master/instrumentation>`_.
 
 We will now instrument a basic Flask application that uses the requests library to send HTTP requests. First, install the instrumentation packages themselves:
 
@@ -174,7 +174,7 @@ Now run the above script, hit the root url (http://localhost:5000/) a few times,
    python flask_example.py
 
 
-Configure Your HTTP Propagator (b3, CorrelationContext)
+Configure Your HTTP Propagator (b3, Baggage)
 -------------------------------------------------------
 
 A major feature of distributed tracing is the ability to correlate a trace across
@@ -194,7 +194,7 @@ an example using Zipkin's `b3 propagation <https://github.com/openzipkin/b3-prop
     from opentelemetry import propagators
     from opentelemetry.sdk.trace.propagation.b3_format import B3Format
 
-    propagators.set_global_httptextformat(B3Format())
+    propagators.set_global_textmap(B3Format())
 
 
 Adding Metrics
@@ -312,10 +312,10 @@ Install the OpenTelemetry Collector exporter:
 
 .. code-block:: sh
 
-    pip install opentelemetry-instrumentation-otcollector
+    pip install opentelemetry-exporter-otlp
 
 And execute the following script:
 
-.. literalinclude:: getting_started/otcollector_example.py
+.. literalinclude:: getting_started/otlpcollector_example.py
     :language: python
     :lines: 15-

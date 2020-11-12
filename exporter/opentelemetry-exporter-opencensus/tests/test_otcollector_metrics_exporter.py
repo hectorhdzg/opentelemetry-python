@@ -32,6 +32,7 @@ from opentelemetry.sdk.metrics.export import (
     MetricsExportResult,
     aggregate,
 )
+from opentelemetry.sdk.resources import Resource
 
 
 # pylint: disable=no-member
@@ -39,9 +40,16 @@ class TestCollectorMetricsExporter(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # pylint: disable=protected-access
-        metrics.set_meter_provider(MeterProvider())
+        cls._resource_labels = {
+            "key_with_str_value": "some string",
+            "key_with_int_val": 321,
+            "key_with_true": True,
+        }
+        metrics.set_meter_provider(
+            MeterProvider(resource=Resource(cls._resource_labels))
+        )
         cls._meter = metrics.get_meter(__name__)
-        cls._labels = {"environment": "staging"}
+        cls._labels = {"environment": "staging", "number": 321}
         cls._key_labels = get_dict_as_key(cls._labels)
 
     def test_constructor(self):
@@ -82,17 +90,22 @@ class TestCollectorMetricsExporter(unittest.TestCase):
 
     def test_get_collector_point(self):
         aggregator = aggregate.SumAggregator()
-        int_counter = self._meter.create_metric(
-            "testName", "testDescription", "unit", int, Counter
+        int_counter = self._meter.create_counter(
+            "testName", "testDescription", "unit", int,
         )
-        float_counter = self._meter.create_metric(
-            "testName", "testDescription", "unit", float, Counter
+        float_counter = self._meter.create_counter(
+            "testName", "testDescription", "unit", float,
         )
-        valuerecorder = self._meter.create_metric(
-            "testName", "testDescription", "unit", float, ValueRecorder
+        valuerecorder = self._meter.create_valuerecorder(
+            "testName", "testDescription", "unit", float,
         )
         result = metrics_exporter.get_collector_point(
-            MetricRecord(int_counter, self._key_labels, aggregator)
+            MetricRecord(
+                int_counter,
+                self._key_labels,
+                aggregator,
+                metrics.get_meter_provider().resource,
+            )
         )
         self.assertIsInstance(result, metrics_pb2.Point)
         self.assertIsInstance(result.timestamp, Timestamp)
@@ -100,13 +113,23 @@ class TestCollectorMetricsExporter(unittest.TestCase):
         aggregator.update(123.5)
         aggregator.take_checkpoint()
         result = metrics_exporter.get_collector_point(
-            MetricRecord(float_counter, self._key_labels, aggregator)
+            MetricRecord(
+                float_counter,
+                self._key_labels,
+                aggregator,
+                metrics.get_meter_provider().resource,
+            )
         )
         self.assertEqual(result.double_value, 123.5)
         self.assertRaises(
             TypeError,
             metrics_exporter.get_collector_point(
-                MetricRecord(valuerecorder, self._key_labels, aggregator)
+                MetricRecord(
+                    valuerecorder,
+                    self._key_labels,
+                    aggregator,
+                    metrics.get_meter_provider().resource,
+                )
             ),
         )
 
@@ -118,11 +141,14 @@ class TestCollectorMetricsExporter(unittest.TestCase):
         collector_exporter = metrics_exporter.OpenCensusMetricsExporter(
             client=mock_client, host_name=host_name
         )
-        test_metric = self._meter.create_metric(
-            "testname", "testdesc", "unit", int, Counter,
+        test_metric = self._meter.create_counter(
+            "testname", "testdesc", "unit", int, self._labels.keys(),
         )
         record = MetricRecord(
-            test_metric, self._key_labels, aggregate.SumAggregator(),
+            test_metric,
+            self._key_labels,
+            aggregate.SumAggregator(),
+            metrics.get_meter_provider().resource,
         )
 
         result = collector_exporter.export([record])
@@ -141,14 +167,22 @@ class TestCollectorMetricsExporter(unittest.TestCase):
         )
 
     def test_translate_to_collector(self):
-        test_metric = self._meter.create_metric(
-            "testname", "testdesc", "unit", int, Counter,
+        test_metric = self._meter.create_counter(
+            "testname", "testdesc", "unit", int, self._labels.keys()
         )
         aggregator = aggregate.SumAggregator()
         aggregator.update(123)
         aggregator.take_checkpoint()
-        record = MetricRecord(test_metric, self._key_labels, aggregator,)
-        output_metrics = metrics_exporter.translate_to_collector([record])
+        record = MetricRecord(
+            test_metric,
+            self._key_labels,
+            aggregator,
+            metrics.get_meter_provider().resource,
+        )
+        start_timestamp = Timestamp()
+        output_metrics = metrics_exporter.translate_to_collector(
+            [record], start_timestamp,
+        )
         self.assertEqual(len(output_metrics), 1)
         self.assertIsInstance(output_metrics[0], metrics_pb2.Metric)
         self.assertEqual(output_metrics[0].metric_descriptor.name, "testname")
@@ -161,14 +195,44 @@ class TestCollectorMetricsExporter(unittest.TestCase):
             metrics_pb2.MetricDescriptor.CUMULATIVE_INT64,
         )
         self.assertEqual(
-            len(output_metrics[0].metric_descriptor.label_keys), 1
+            len(output_metrics[0].metric_descriptor.label_keys), 2
         )
         self.assertEqual(
             output_metrics[0].metric_descriptor.label_keys[0].key,
             "environment",
         )
+        self.assertEqual(
+            output_metrics[0].metric_descriptor.label_keys[1].key, "number",
+        )
+
+        self.assertIsNotNone(output_metrics[0].resource)
+        self.assertEqual(
+            output_metrics[0].resource.type, "",
+        )
+        self.assertEqual(
+            output_metrics[0].resource.labels["key_with_str_value"],
+            self._resource_labels["key_with_str_value"],
+        )
+        self.assertIsInstance(
+            output_metrics[0].resource.labels["key_with_int_val"], str,
+        )
+        self.assertEqual(
+            output_metrics[0].resource.labels["key_with_int_val"],
+            str(self._resource_labels["key_with_int_val"]),
+        )
+        self.assertIsInstance(
+            output_metrics[0].resource.labels["key_with_true"], str,
+        )
+        self.assertEqual(
+            output_metrics[0].resource.labels["key_with_true"],
+            str(self._resource_labels["key_with_true"]),
+        )
+
         self.assertEqual(len(output_metrics[0].timeseries), 1)
-        self.assertEqual(len(output_metrics[0].timeseries[0].label_values), 1)
+        self.assertEqual(len(output_metrics[0].timeseries[0].label_values), 2)
+        self.assertEqual(
+            output_metrics[0].timeseries[0].start_timestamp, start_timestamp
+        )
         self.assertEqual(
             output_metrics[0].timeseries[0].label_values[0].has_value, True
         )
@@ -186,4 +250,60 @@ class TestCollectorMetricsExporter(unittest.TestCase):
         )
         self.assertEqual(
             output_metrics[0].timeseries[0].points[0].int64_value, 123
+        )
+
+    def test_infer_ot_resource_type(self):
+        # empty resource
+        self.assertEqual(metrics_exporter.infer_oc_resource_type({}), "")
+
+        # container
+        self.assertEqual(
+            metrics_exporter.infer_oc_resource_type(
+                {
+                    "k8s.cluster.name": "cluster1",
+                    "k8s.pod.name": "pod1",
+                    "k8s.namespace.name": "namespace1",
+                    "container.name": "container-name1",
+                    "cloud.account.id": "proj1",
+                    "cloud.zone": "zone1",
+                }
+            ),
+            "container",
+        )
+
+        # k8s pod
+        self.assertEqual(
+            metrics_exporter.infer_oc_resource_type(
+                {
+                    "k8s.cluster.name": "cluster1",
+                    "k8s.pod.name": "pod1",
+                    "k8s.namespace.name": "namespace1",
+                    "cloud.zone": "zone1",
+                }
+            ),
+            "k8s",
+        )
+
+        # host
+        self.assertEqual(
+            metrics_exporter.infer_oc_resource_type(
+                {
+                    "k8s.cluster.name": "cluster1",
+                    "cloud.zone": "zone1",
+                    "host.name": "node1",
+                }
+            ),
+            "host",
+        )
+
+        # cloud
+        self.assertEqual(
+            metrics_exporter.infer_oc_resource_type(
+                {
+                    "cloud.provider": "gcp",
+                    "host.id": "inst1",
+                    "cloud.zone": "zone1",
+                }
+            ),
+            "cloud",
         )

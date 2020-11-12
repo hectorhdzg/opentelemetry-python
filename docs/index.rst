@@ -11,8 +11,8 @@ The Python `OpenTelemetry <https://opentelemetry.io/>`_ client.
 This documentation describes the :doc:`opentelemetry-api <api/api>`,
 :doc:`opentelemetry-sdk <sdk/sdk>`, and several `integration packages <#integrations>`_.
 
-**Please note** that this library is currently in alpha, and shouldn't be
-used in production environments.
+**Please note** that this library is currently in _beta_, and shouldn't
+generally be used in production environments.
 
 Installation
 ------------
@@ -30,7 +30,10 @@ In addition, there are several extension packages which can be installed separat
     pip install opentelemetry-instrumentation-{instrumentation}
 
 These are for exporter and instrumentation packages respectively.
-The packages can be found in :scm_web:`instrumentation/ directory of the repository <ext/>`.
+Some packages can be found in :scm_web:`instrumentation <instrumentation/>` and :scm_web:`exporter <exporter/>`
+directory of the repository. The remaining packages can be found at the 
+`Contrib repo instrumentation <https://github.com/open-telemetry/opentelemetry-python-contrib/tree/master/instrumentation>`_
+and `Contrib repo exporter <https://github.com/open-telemetry/opentelemetry-python-contrib/tree/master/exporter>`_ directories.
 
 Extensions
 ----------
@@ -53,7 +56,6 @@ install <https://pip.pypa.io/en/stable/reference/pip_install/#editable-installs>
     cd opentelemetry-python
     pip install -e ./opentelemetry-api
     pip install -e ./opentelemetry-sdk
-    pip install -e ./instrumentation/opentelemetry-instrumentation-{instrumentation}
 
 
 .. toctree::
@@ -62,6 +64,7 @@ install <https://pip.pypa.io/en/stable/reference/pip_install/#editable-installs>
     :name: getting-started
 
     getting-started
+    faq-and-cookbook
 
 .. toctree::
     :maxdepth: 1

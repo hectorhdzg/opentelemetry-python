@@ -13,12 +13,14 @@
 # limitations under the License.
 
 import unittest
+from math import inf
 from unittest import mock
 
 from opentelemetry.sdk import metrics
-from opentelemetry.sdk.metrics import Counter, view
+from opentelemetry.sdk.metrics import view
 from opentelemetry.sdk.metrics.export import aggregate
 from opentelemetry.sdk.metrics.export.aggregate import (
+    HistogramAggregator,
     MinMaxSumCountAggregator,
     SumAggregator,
 )
@@ -77,12 +79,11 @@ class TestStateless(unittest.TestCase):
         self.controller.shutdown()
 
     def test_label_keys(self):
-        test_counter = self.meter.create_metric(
+        test_counter = self.meter.create_counter(
             name="test_counter",
             description="description",
             unit="By",
             value_type=int,
-            metric_type=Counter,
         )
         counter_view = View(
             test_counter,
@@ -105,12 +106,11 @@ class TestStateless(unittest.TestCase):
         self.assertEqual(metric_data[0].aggregator.checkpoint, 11)
 
     def test_ungrouped(self):
-        test_counter = self.meter.create_metric(
+        test_counter = self.meter.create_counter(
             name="test_counter",
             description="description",
             unit="By",
             value_type=int,
-            metric_type=Counter,
         )
         counter_view = View(
             test_counter,
@@ -136,12 +136,11 @@ class TestStateless(unittest.TestCase):
         self.assertTrue((label2, 5) in data_set)
 
     def test_multiple_views(self):
-        test_counter = self.meter.create_metric(
+        test_counter = self.meter.create_counter(
             name="test_counter",
             description="description",
             unit="By",
             value_type=int,
-            metric_type=Counter,
         )
 
         counter_view = View(
@@ -183,6 +182,115 @@ class TestStateless(unittest.TestCase):
         label2 = (("customer_id", 247), ("environment", "production"))
         self.assertTrue((label1, 6) in sum_set)
         self.assertTrue((label2, 5) in sum_set)
+
+
+class TestHistogramView(unittest.TestCase):
+    def test_histogram_stateful(self):
+        meter = metrics.MeterProvider(stateful=True).get_meter(__name__)
+        exporter = InMemoryMetricsExporter()
+        controller = PushController(meter, exporter, 30)
+
+        requests_size = meter.create_valuerecorder(
+            name="requests_size",
+            description="size of requests",
+            unit="1",
+            value_type=int,
+        )
+
+        size_view = View(
+            requests_size,
+            HistogramAggregator,
+            aggregator_config={"bounds": [20, 40, 60, 80, 100]},
+            label_keys=["environment"],
+            view_config=ViewConfig.LABEL_KEYS,
+        )
+
+        meter.register_view(size_view)
+
+        # Since this is using the HistogramAggregator, the bucket counts will be reflected
+        # with each record
+        requests_size.record(25, {"environment": "staging", "test": "value"})
+        requests_size.record(1, {"environment": "staging", "test": "value2"})
+        requests_size.record(200, {"environment": "staging", "test": "value3"})
+
+        controller.tick()
+
+        metrics_list = exporter.get_exported_metrics()
+        self.assertEqual(len(metrics_list), 1)
+        checkpoint = metrics_list[0].aggregator.checkpoint
+        self.assertEqual(
+            tuple(checkpoint.items()),
+            ((20, 1), (40, 1), (60, 0), (80, 0), (100, 0), (inf, 1)),
+        )
+        exporter.clear()
+
+        requests_size.record(25, {"environment": "staging", "test": "value"})
+        requests_size.record(1, {"environment": "staging", "test": "value2"})
+        requests_size.record(200, {"environment": "staging", "test": "value3"})
+
+        controller.tick()
+
+        metrics_list = exporter.get_exported_metrics()
+        self.assertEqual(len(metrics_list), 1)
+        checkpoint = metrics_list[0].aggregator.checkpoint
+        self.assertEqual(
+            tuple(checkpoint.items()),
+            ((20, 2), (40, 2), (60, 0), (80, 0), (100, 0), (inf, 2)),
+        )
+
+    def test_histogram_stateless(self):
+        # Use the meter type provided by the SDK package
+        meter = metrics.MeterProvider(stateful=False).get_meter(__name__)
+        exporter = InMemoryMetricsExporter()
+        controller = PushController(meter, exporter, 30)
+
+        requests_size = meter.create_valuerecorder(
+            name="requests_size",
+            description="size of requests",
+            unit="1",
+            value_type=int,
+        )
+
+        size_view = View(
+            requests_size,
+            HistogramAggregator,
+            aggregator_config={"bounds": [20, 40, 60, 80, 100]},
+            label_keys=["environment"],
+            view_config=ViewConfig.LABEL_KEYS,
+        )
+
+        meter.register_view(size_view)
+
+        # Since this is using the HistogramAggregator, the bucket counts will be reflected
+        # with each record
+        requests_size.record(25, {"environment": "staging", "test": "value"})
+        requests_size.record(1, {"environment": "staging", "test": "value2"})
+        requests_size.record(200, {"environment": "staging", "test": "value3"})
+
+        controller.tick()
+
+        metrics_list = exporter.get_exported_metrics()
+        self.assertEqual(len(metrics_list), 1)
+        checkpoint = metrics_list[0].aggregator.checkpoint
+        self.assertEqual(
+            tuple(checkpoint.items()),
+            ((20, 1), (40, 1), (60, 0), (80, 0), (100, 0), (inf, 1)),
+        )
+        exporter.clear()
+
+        requests_size.record(25, {"environment": "staging", "test": "value"})
+        requests_size.record(1, {"environment": "staging", "test": "value2"})
+        requests_size.record(200, {"environment": "staging", "test": "value3"})
+
+        controller.tick()
+
+        metrics_list = exporter.get_exported_metrics()
+        self.assertEqual(len(metrics_list), 1)
+        checkpoint = metrics_list[0].aggregator.checkpoint
+        self.assertEqual(
+            tuple(checkpoint.items()),
+            ((20, 1), (40, 1), (60, 0), (80, 0), (100, 0), (inf, 1)),
+        )
 
 
 class DummyMetric(metrics.Metric):
