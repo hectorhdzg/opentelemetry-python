@@ -25,7 +25,9 @@ from opencensus.proto.agent.trace.v1 import (
 from opencensus.proto.trace.v1 import trace_pb2
 
 import opentelemetry.exporter.opencensus.util as utils
-from opentelemetry.sdk.trace import Span
+from opentelemetry import trace
+from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
 DEFAULT_ENDPOINT = "localhost:55678"
@@ -39,7 +41,6 @@ class OpenCensusSpanExporter(SpanExporter):
 
     Args:
         endpoint: OpenCensus Collector receiver endpoint.
-        service_name: Name of Collector service.
         host_name: Host name.
         client: TraceService client stub.
     """
@@ -47,10 +48,15 @@ class OpenCensusSpanExporter(SpanExporter):
     def __init__(
         self,
         endpoint=DEFAULT_ENDPOINT,
-        service_name=None,
         host_name=None,
         client=None,
     ):
+        tracer_provider = trace.get_tracer_provider()
+        service_name = (
+            tracer_provider.resource.attributes[SERVICE_NAME]
+            if getattr(tracer_provider, "resource", None)
+            else Resource.create().attributes.get(SERVICE_NAME)
+        )
         self.endpoint = endpoint
         if client is None:
             self.channel = grpc.insecure_channel(self.endpoint)
@@ -60,9 +66,19 @@ class OpenCensusSpanExporter(SpanExporter):
         else:
             self.client = client
 
+        self.host_name = host_name
         self.node = utils.get_node(service_name, host_name)
 
-    def export(self, spans: Sequence[Span]) -> SpanExportResult:
+    def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+        # Populate service_name from first span
+        # We restrict any SpanProcessor to be only associated with a single
+        # TracerProvider, so it is safe to assume that all Spans in a single
+        # batch all originate from one TracerProvider (and in turn have all
+        # the same service_name)
+        if spans:
+            service_name = spans[0].resource.attributes.get(SERVICE_NAME)
+            if service_name:
+                self.node = utils.get_node(service_name, self.host_name)
         try:
             responses = self.client.Export(self.generate_span_requests(spans))
 
@@ -85,9 +101,12 @@ class OpenCensusSpanExporter(SpanExporter):
         )
         yield service_request
 
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        return True
+
 
 # pylint: disable=too-many-branches
-def translate_to_collector(spans: Sequence[Span]):
+def translate_to_collector(spans: Sequence[ReadableSpan]):
     collector_spans = []
     for span in spans:
         status = None
@@ -114,24 +133,23 @@ def translate_to_collector(spans: Sequence[Span]):
         collector_span.parent_span_id = parent_id.to_bytes(8, "big")
 
         if span.context.trace_state is not None:
-            for (key, value) in span.context.trace_state.items():
+            for key, value in span.context.trace_state.items():
                 collector_span.tracestate.entries.add(key=key, value=value)
 
         if span.attributes:
-            for (key, value) in span.attributes.items():
+            for key, value in span.attributes.items():
                 utils.add_proto_attribute_value(
                     collector_span.attributes, key, value
                 )
 
         if span.events:
             for event in span.events:
-
                 collector_annotation = trace_pb2.Span.TimeEvent.Annotation(
                     description=trace_pb2.TruncatableString(value=event.name)
                 )
 
                 if event.attributes:
-                    for (key, value) in event.attributes.items():
+                    for key, value in event.attributes.items():
                         utils.add_proto_attribute_value(
                             collector_annotation.attributes, key, value
                         )
@@ -164,7 +182,7 @@ def translate_to_collector(spans: Sequence[Span]):
                         )
 
                 if link.attributes:
-                    for (key, value) in link.attributes.items():
+                    for key, value in link.attributes.items():
                         utils.add_proto_attribute_value(
                             collector_span_link.attributes, key, value
                         )

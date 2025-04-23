@@ -30,7 +30,6 @@ class RedisCache:
         @wraps(func)
         def inner(*args, **kwargs):
             with self.tracer.start_active_span("Caching decorator") as scope1:
-
                 # Pickle the call args to get a canonical key. Don't do this in
                 # prod!
                 key = pickle.dumps((func.__qualname__, args, kwargs))
@@ -45,7 +44,7 @@ class RedisCache:
 
                 scope1.span.log_kv({"msg": "Cache miss, calling function"})
                 with self.tracer.start_active_span(
-                    'Call "{}"'.format(func.__name__)
+                    f'Call "{func.__name__}"'
                 ) as scope2:
                     scope2.span.set_tag("func", func.__name__)
                     scope2.span.set_tag("args", str(args))

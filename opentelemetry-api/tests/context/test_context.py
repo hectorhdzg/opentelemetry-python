@@ -13,32 +13,47 @@
 # limitations under the License.
 
 import unittest
+from unittest.mock import patch
 
 from opentelemetry import context
 from opentelemetry.context.context import Context
+from opentelemetry.context.contextvars_context import ContextVarsRuntimeContext
+from opentelemetry.environment_variables import OTEL_PYTHON_CONTEXT
 
 
-def do_work() -> None:
-    context.attach(context.set_value("say", "bar"))
+def _do_work() -> str:
+    key = context.create_key("say")
+    context.attach(context.set_value(key, "bar"))
+    return key
 
 
 class TestContext(unittest.TestCase):
     def setUp(self):
         context.attach(Context())
 
-    def test_context(self):
-        self.assertIsNone(context.get_value("say"))
-        empty = context.get_current()
-        second = context.set_value("say", "foo")
-        self.assertEqual(context.get_value("say", context=second), "foo")
+    def test_context_key(self):
+        key1 = context.create_key("say")
+        key2 = context.create_key("say")
+        self.assertNotEqual(key1, key2)
+        first = context.set_value(key1, "foo")
+        second = context.set_value(key2, "bar")
+        self.assertEqual(context.get_value(key1, context=first), "foo")
+        self.assertEqual(context.get_value(key2, context=second), "bar")
 
-        do_work()
-        self.assertEqual(context.get_value("say"), "bar")
+    def test_context(self):
+        key1 = context.create_key("say")
+        self.assertIsNone(context.get_value(key1))
+        empty = context.get_current()
+        second = context.set_value(key1, "foo")
+        self.assertEqual(context.get_value(key1, context=second), "foo")
+
+        key2 = _do_work()
+        self.assertEqual(context.get_value(key2), "bar")
         third = context.get_current()
 
-        self.assertIsNone(context.get_value("say", context=empty))
-        self.assertEqual(context.get_value("say", context=second), "foo")
-        self.assertEqual(context.get_value("say", context=third), "bar")
+        self.assertIsNone(context.get_value(key1, context=empty))
+        self.assertEqual(context.get_value(key1, context=second), "foo")
+        self.assertEqual(context.get_value(key2, context=third), "bar")
 
     def test_set_value(self):
         first = context.set_value("a", "yyy")
@@ -62,3 +77,19 @@ class TestContext(unittest.TestCase):
 
         context.detach(token)
         self.assertEqual("yyy", context.get_value("a"))
+
+
+class TestInitContext(unittest.TestCase):
+    def test_load_runtime_context_default(self):
+        ctx = context._load_runtime_context()  # pylint: disable=W0212
+        self.assertIsInstance(ctx, ContextVarsRuntimeContext)
+
+    @patch.dict("os.environ", {OTEL_PYTHON_CONTEXT: "contextvars_context"})
+    def test_load_runtime_context(self):  # type: ignore[misc]
+        ctx = context._load_runtime_context()  # pylint: disable=W0212
+        self.assertIsInstance(ctx, ContextVarsRuntimeContext)
+
+    @patch.dict("os.environ", {OTEL_PYTHON_CONTEXT: "foo"})
+    def test_load_runtime_context_fallback(self):  # type: ignore[misc]
+        ctx = context._load_runtime_context()  # pylint: disable=W0212
+        self.assertIsInstance(ctx, ContextVarsRuntimeContext)

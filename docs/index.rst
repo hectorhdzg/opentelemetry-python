@@ -1,106 +1,44 @@
-OpenTelemetry-Python
-====================
+OpenTelemetry-Python API Reference
+==================================
 
-The Python `OpenTelemetry <https://opentelemetry.io/>`_ client.
+.. image:: https://img.shields.io/badge/slack-chat-green.svg
+   :target: https://cloud-native.slack.com/archives/C01PD4HUVBL
+   :alt: Slack Chat
 
-.. image:: https://img.shields.io/gitter/room/opentelemetry/opentelemetry-python
-   :target: https://gitter.im/open-telemetry/opentelemetry-python
-   :alt: Gitter Chat
+Welcome to the docs for the `Python OpenTelemetry implementation
+<https://opentelemetry.io/docs/instrumentation/python/>`_.
 
+For an introduction to OpenTelemetry, see the `OpenTelemetry website docs
+<https://opentelemetry.io/docs/>`_.
 
-This documentation describes the :doc:`opentelemetry-api <api/api>`,
-:doc:`opentelemetry-sdk <sdk/sdk>`, and several `integration packages <#integrations>`_.
+To learn how to instrument your Python code, see `Getting Started
+<https://opentelemetry.io/docs/instrumentation/python/getting-started/>`_. For
+project status, information about releases, installation instructions and more,
+see `Python <https://opentelemetry.io/docs/instrumentation/python/>`_.
 
-**Please note** that this library is currently in _beta_, and shouldn't
-generally be used in production environments.
+Getting Started
+---------------
 
-Installation
-------------
-
-The API and SDK packages are available on PyPI, and can installed via pip:
-
-.. code-block:: sh
-
-    pip install opentelemetry-api
-    pip install opentelemetry-sdk
-
-In addition, there are several extension packages which can be installed separately as::
-
-    pip install opentelemetry-exporter-{exporter}
-    pip install opentelemetry-instrumentation-{instrumentation}
-
-These are for exporter and instrumentation packages respectively.
-Some packages can be found in :scm_web:`instrumentation <instrumentation/>` and :scm_web:`exporter <exporter/>`
-directory of the repository. The remaining packages can be found at the 
-`Contrib repo instrumentation <https://github.com/open-telemetry/opentelemetry-python-contrib/tree/master/instrumentation>`_
-and `Contrib repo exporter <https://github.com/open-telemetry/opentelemetry-python-contrib/tree/master/exporter>`_ directories.
-
-Extensions
-----------
-
-Visit `OpenTelemetry Registry <https://opentelemetry.io/registry/?s=python>`_ to find
-related projects like exporters, instrumentation libraries, tracer implementations, etc.
-
-Installing Cutting Edge Packages
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-While the project is pre-1.0, there may be significant functionality that
-has not yet been released to PyPI. In that situation, you may want to
-install the packages directly from the repo. This can be done by cloning the
-repository and doing an `editable
-install <https://pip.pypa.io/en/stable/reference/pip_install/#editable-installs>`_:
-
-.. code-block:: sh
-
-    git clone https://github.com/open-telemetry/opentelemetry-python.git
-    cd opentelemetry-python
-    pip install -e ./opentelemetry-api
-    pip install -e ./opentelemetry-sdk
-
+* `Getting Started <https://opentelemetry.io/docs/instrumentation/python/getting-started/>`_
+* `Frequently Asked Questions and Cookbook <https://opentelemetry.io/docs/instrumentation/python/cookbook/>`_
 
 .. toctree::
     :maxdepth: 1
-    :caption: Getting Started
-    :name: getting-started
-
-    getting-started
-    faq-and-cookbook
-
-.. toctree::
-    :maxdepth: 1
-    :caption: OpenTelemetry Python Packages
+    :caption: Core Packages
     :name: packages
 
-    api/api
-    sdk/sdk
-    instrumentation/instrumentation
+    api/index
+    sdk/index
 
 .. toctree::
     :maxdepth: 2
-    :caption: OpenTelemetry Exporters
-    :name: exporters
+    :caption: More
     :glob:
 
-    exporter/**
+    exporter/index
+    shim/index
+    examples/index
 
-.. toctree::
-    :maxdepth: 2
-    :caption: OpenTelemetry Instrumentations
-    :name: Instrumentations
-    :glob:
-
-    instrumentation/**
-
-.. toctree::
-    :maxdepth: 1
-    :caption: Examples
-    :name: examples
-    :glob:
-
-    examples/**
-
-Indices and tables
-------------------
 
 * :ref:`genindex`
 * :ref:`modindex`

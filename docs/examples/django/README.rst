@@ -1,5 +1,5 @@
-OpenTelemetry Django Instrumentation Example
-============================================
+Django Instrumentation
+======================
 
 This shows how to use ``opentelemetry-instrumentation-django`` to automatically instrument a
 Django app.
@@ -34,6 +34,9 @@ Execution
 Execution of the Django app
 ...........................
 
+This example uses Django features intended for development environment.
+The ``runserver`` option should not be used for production environments.
+
 Set these environment variables first:
 
 #. ``export DJANGO_SETTINGS_MODULE=instrumentation_example.settings``
@@ -46,7 +49,8 @@ Clone the ``opentelemetry-python`` repository and go to ``opentelemetry-python/d
 Once there, open the ``manage.py`` file. The call to ``DjangoInstrumentor().instrument()``
 in ``main`` is all that is needed to make the app be instrumented.
 
-Run the Django app with ``python manage.py runserver``.
+Run the Django app with ``python manage.py runserver --noreload``.
+The ``--noreload`` flag is needed to avoid Django from running ``main`` twice.
 
 Execution of the client
 .......................
@@ -80,17 +84,14 @@ output similar to this one:
             "status_code": "OK"
         },
         "attributes": {
-            "component": "http",
-            "http.method": "GET",
-            "http.server_name": "localhost",
-            "http.scheme": "http",
-            "host.port": 8000,
-            "http.host": "localhost:8000",
-            "http.url": "http://localhost:8000/?param=hello",
-            "net.peer.ip": "127.0.0.1",
-            "http.flavor": "1.1",
-            "http.status_text": "OK",
-            "http.status_code": 200
+            "http.request.method": "GET",
+            "server.address": "localhost",
+            "url.scheme": "http",
+            "server.port": 8000,
+            "url.full": "http://localhost:8000/?param=hello",
+            "server.socket.address": "127.0.0.1",
+            "network.protocol.version": "1.1",
+            "http.response.status_code": 200
         },
         "events": [],
         "links": []
@@ -102,13 +103,38 @@ Instrumentation package.
 Disabling Django Instrumentation
 --------------------------------
 
-Django's instrumentation can be disabled by setting the following environment variable.
+Django's instrumentation can be disabled by setting the following environment variable:
 
-#. ``export OTEL_PYTHON_DJANGO_INSTRUMENT=False``
+``export OTEL_PYTHON_DJANGO_INSTRUMENT=False``
+
+Auto Instrumentation
+--------------------
+
+This same example can be run using auto instrumentation. Comment out the call
+to ``DjangoInstrumentor().instrument()`` in ``main``, then Run the django app
+with ``opentelemetry-instrument python manage.py runserver --noreload``.
+Repeat the steps with the client, the result should be the same.
+
+Usage with Auto Instrumentation and uWSGI
+-----------------------------------------
+
+uWSGI and Django can be used together with auto instrumentation. To do so,
+first install uWSGI in the previous virtual environment:
+
+``pip install uwsgi``
+
+Once that is done, run the server with ``uwsgi`` from the directory that
+contains ``instrumentation_example``:
+
+``opentelemetry-instrument uwsgi --http :8000 --module instrumentation_example.wsgi``
+
+This should start one uWSGI worker in your console. Open up a browser and point
+it to ``localhost:8000``. This request should display a span exported in the
+server console.
 
 References
 ----------
 
 * `Django <https://djangoproject.com/>`_
 * `OpenTelemetry Project <https://opentelemetry.io/>`_
-* `OpenTelemetry Django extension <https://github.com/open-telemetry/opentelemetry-python-contib/tree/master/instrumentation/opentelemetry-instrumentation-django>`_
+* `OpenTelemetry Django extension <https://github.com/open-telemetry/opentelemetry-python-contrib/tree/main/instrumentation/opentelemetry-instrumentation-django>`_

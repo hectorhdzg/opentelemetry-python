@@ -11,21 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from contextvars import ContextVar
-from sys import version_info
 
-from opentelemetry.context.context import Context, RuntimeContext
+from __future__ import annotations
 
-if (3, 5, 3) <= version_info < (3, 7):
-    import aiocontextvars  # type: ignore # pylint:disable=unused-import,import-error
+from contextvars import ContextVar, Token
 
-elif (3, 4) < version_info <= (3, 5, 2):
-    import opentelemetry.context.aiocontextvarsfix  # pylint:disable=unused-import
+from opentelemetry.context.context import Context, _RuntimeContext
 
 
-class ContextVarsRuntimeContext(RuntimeContext):
+class ContextVarsRuntimeContext(_RuntimeContext):
     """An implementation of the RuntimeContext interface which wraps ContextVar under
-    the hood. This is the prefered implementation for usage with Python 3.5+
+    the hood. This is the preferred implementation for usage with Python 3.5+
     """
 
     _CONTEXT_KEY = "current_context"
@@ -35,17 +31,26 @@ class ContextVarsRuntimeContext(RuntimeContext):
             self._CONTEXT_KEY, default=Context()
         )
 
-    def attach(self, context: Context) -> object:
-        """See `opentelemetry.context.RuntimeContext.attach`."""
+    def attach(self, context: Context) -> Token[Context]:
+        """Sets the current `Context` object. Returns a
+        token that can be used to reset to the previous `Context`.
+
+        Args:
+            context: The Context to set.
+        """
         return self._current_context.set(context)
 
     def get_current(self) -> Context:
-        """See `opentelemetry.context.RuntimeContext.get_current`."""
+        """Returns the current `Context` object."""
         return self._current_context.get()
 
-    def detach(self, token: object) -> None:
-        """See `opentelemetry.context.RuntimeContext.detach`."""
-        self._current_context.reset(token)  # type: ignore
+    def detach(self, token: Token[Context]) -> None:
+        """Resets Context to a previous value
+
+        Args:
+            token: A reference to a previous Context.
+        """
+        self._current_context.reset(token)
 
 
 __all__ = ["ContextVarsRuntimeContext"]

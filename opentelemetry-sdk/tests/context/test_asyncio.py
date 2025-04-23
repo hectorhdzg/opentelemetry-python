@@ -17,20 +17,12 @@ import unittest
 from unittest.mock import patch
 
 from opentelemetry import context
+from opentelemetry.context.contextvars_context import ContextVarsRuntimeContext
 from opentelemetry.sdk import trace
 from opentelemetry.sdk.trace import export
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
-
-try:
-    import contextvars  # pylint: disable=unused-import
-    from opentelemetry.context.contextvars_context import (
-        ContextVarsRuntimeContext,
-    )
-except ImportError:
-    raise unittest.SkipTest("contextvars not available")
-
 
 _SPAN_NAMES = [
     "test_span1",
@@ -54,8 +46,7 @@ def stop_loop_when(loop, cond_func, timeout=5.0):
 
 
 class TestAsyncio(unittest.TestCase):
-    @asyncio.coroutine
-    def task(self, name):
+    async def task(self, name):
         with self.tracer.start_as_current_span(name):
             context.set_value("say", "bar")
 
@@ -67,7 +58,7 @@ class TestAsyncio(unittest.TestCase):
         self.tracer_provider = trace.TracerProvider()
         self.tracer = self.tracer_provider.get_tracer(__name__)
         self.memory_exporter = InMemorySpanExporter()
-        span_processor = export.SimpleExportSpanProcessor(self.memory_exporter)
+        span_processor = export.SimpleSpanProcessor(self.memory_exporter)
         self.tracer_provider.add_span_processor(span_processor)
         self.loop = asyncio.get_event_loop()
 
@@ -108,4 +99,4 @@ class TestAsyncio(unittest.TestCase):
         for span in span_list:
             if span is expected_parent:
                 continue
-            self.assertEqual(span.parent, expected_parent.get_span_context())
+            self.assertEqual(span.parent, expected_parent.context)

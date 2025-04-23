@@ -1,5 +1,5 @@
 opentelemetry.sdk.trace package
-==========================================
+===============================
 
 Submodules
 ----------
@@ -7,6 +7,7 @@ Submodules
 .. toctree::
 
    trace.export
+   trace.id_generator
    trace.sampling
    util.instrumentation
 

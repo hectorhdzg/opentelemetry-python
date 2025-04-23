@@ -35,14 +35,14 @@ exp_dirs = [
     if isdir(join(exp, f))
 ]
 
-instr = "../instrumentation"
-instr_dirs = [
-    os.path.abspath("/".join(["../instrumentation", f, "src"]))
-    for f in listdir(instr)
-    if isdir(join(instr, f))
+shim = "../shim"
+shim_dirs = [
+    os.path.abspath("/".join(["../shim", f, "src"]))
+    for f in listdir(shim)
+    if isdir(join(shim, f))
 ]
 
-sys.path[:0] = source_dirs + exp_dirs + instr_dirs
+sys.path[:0] = source_dirs + exp_dirs + shim_dirs
 
 # -- Project information -----------------------------------------------------
 
@@ -86,6 +86,7 @@ intersphinx_mapping = {
     "aiohttp": ("https://aiohttp.readthedocs.io/en/stable/", None),
     "wrapt": ("https://wrapt.readthedocs.io/en/latest/", None),
     "pymongo": ("https://pymongo.readthedocs.io/en/stable/", None),
+    "grpc": ("https://grpc.github.io/grpc/python/", None),
 }
 
 # http://www.sphinx-doc.org/en/master/config.html#confval-nitpicky
@@ -96,20 +97,66 @@ nitpicky = True
 # https://github.com/sphinx-doc/sphinx/pull/3744
 nitpick_ignore = [
     ("py:class", "ValueT"),
-    ("py:class", "MetricT"),
+    ("py:class", "CarrierT"),
+    ("py:obj", "opentelemetry.propagators.textmap.CarrierT"),
+    ("py:obj", "Union"),
+    (
+        "py:class",
+        "opentelemetry.sdk.metrics._internal.instrument._Synchronous",
+    ),
+    (
+        "py:class",
+        "opentelemetry.sdk.metrics._internal.instrument._Asynchronous",
+    ),
     # Even if wrapt is added to intersphinx_mapping, sphinx keeps failing
     # with "class reference target not found: ObjectProxy".
     ("py:class", "ObjectProxy"),
-    # TODO: Understand why sphinx is not able to find this local class
-    ("py:class", "opentelemetry.trace.propagation.textmap.TextMapPropagator",),
-    ("py:class", "opentelemetry.trace.propagation.textmap.DictGetter",),
     (
-        "any",
-        "opentelemetry.trace.propagation.textmap.TextMapPropagator.extract",
+        "py:class",
+        "opentelemetry.trace._LinkBase",
     ),
     (
-        "any",
-        "opentelemetry.trace.propagation.textmap.TextMapPropagator.inject",
+        "py:class",
+        "opentelemetry.exporter.otlp.proto.grpc.exporter.OTLPExporterMixin",
+    ),
+    (
+        "py:class",
+        "opentelemetry.proto.collector.trace.v1.trace_service_pb2.ExportTraceServiceRequest",
+    ),
+    (
+        "py:class",
+        "opentelemetry.exporter.otlp.proto.common._internal.metrics_encoder.OTLPMetricExporterMixin",
+    ),
+    ("py:class", "opentelemetry.proto.resource.v1.resource_pb2.Resource"),
+    (
+        "py:class",
+        "opentelemetry.proto.collector.metrics.v1.metrics_service_pb2.ExportMetricsServiceRequest",
+    ),
+    ("py:class", "opentelemetry.sdk._logs._internal.export.LogExporter"),
+    ("py:class", "opentelemetry.sdk._logs._internal.export.LogExportResult"),
+    (
+        "py:class",
+        "opentelemetry.proto.collector.logs.v1.logs_service_pb2.ExportLogsServiceRequest",
+    ),
+    (
+        "py:class",
+        "opentelemetry.sdk.metrics._internal.exemplar.exemplar_reservoir.FixedSizeExemplarReservoirABC",
+    ),
+    (
+        "py:class",
+        "opentelemetry.sdk.metrics._internal.exemplar.exemplar.Exemplar",
+    ),
+    (
+        "py:class",
+        "opentelemetry.sdk.metrics._internal.aggregation._Aggregation",
+    ),
+    (
+        "py:class",
+        "_contextvars.Token",
+    ),
+    (
+        "py:class",
+        "AnyValue",
     ),
 ]
 
@@ -119,13 +166,24 @@ templates_path = ["_templates"]
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This pattern also affects html_static_path and html_extra_path.
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+exclude_patterns = [
+    "_build",
+    "Thumbs.db",
+    ".DS_Store",
+    "examples/fork-process-model/flask-gunicorn",
+    "examples/fork-process-model/flask-uwsgi",
+    "examples/error_handler/error_handler_0",
+    "examples/error_handler/error_handler_1",
+]
+
+_exclude_members = ["_abc_impl"]
 
 autodoc_default_options = {
     "members": True,
     "undoc-members": True,
     "show-inheritance": True,
     "member-order": "bysource",
+    "exclude-members": ",".join(_exclude_members),
 }
 
 # -- Options for HTML output -------------------------------------------------
@@ -143,7 +201,7 @@ html_static_path = []
 # Support external links to specific versions of the files in the Github repo
 branch = os.environ.get("READTHEDOCS_VERSION")
 if branch is None or branch == "latest":
-    branch = "master"
+    branch = "main"
 
 REPO = "open-telemetry/opentelemetry-python/"
 scm_raw_web = "https://raw.githubusercontent.com/" + REPO + branch
@@ -154,12 +212,21 @@ rst_epilog = """
 .. |SCM_WEB| replace:: {s}
 .. |SCM_RAW_WEB| replace:: {sr}
 .. |SCM_BRANCH| replace:: {b}
-""".format(
-    s=scm_web, sr=scm_raw_web, b=branch
-)
+""".format(s=scm_web, sr=scm_raw_web, b=branch)
 
 # used to have links to repo files
 extlinks = {
     "scm_raw_web": (scm_raw_web + "/%s", "scm_raw_web"),
     "scm_web": (scm_web + "/%s", "scm_web"),
 }
+
+
+def on_missing_reference(app, env, node, contnode):
+    # FIXME Remove when opentelemetry.metrics._Gauge is renamed to
+    # opentelemetry.metrics.Gauge
+    if node["reftarget"] == "opentelemetry.metrics.Gauge":
+        return contnode
+
+
+def setup(app):
+    app.connect("missing-reference", on_missing_reference)

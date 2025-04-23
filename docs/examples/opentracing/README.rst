@@ -1,8 +1,8 @@
-OpenTracing Shim Example
-==========================
+OpenTracing Shim
+================
 
-This example shows how to use the :doc:`opentelemetry-instrumentation-opentracing-shim
-package <../../instrumentation/opentracing_shim/opentracing_shim>`
+This example shows how to use the :doc:`opentelemetry-opentracing-shim
+package <../../shim/opentracing_shim/opentracing_shim>`
 to interact with libraries instrumented with
 `opentracing-python <https://github.com/opentracing/opentracing-python>`_.
 
@@ -26,10 +26,10 @@ Start Jaeger
 .. code-block:: sh
 
     docker run --rm \
-        -p 6831:6831/udp \
-        -p 6832:6832/udp \
+        -p 4317:4317 \
+        -p 4318:4318 \
         -p 16686:16686 \
-        jaegertracing/all-in-one:1.13 \
+        jaegertracing/all-in-one:latest \
         --log-level=debug
 
 Redis
@@ -61,7 +61,7 @@ Alternatively, you can install the Python dependencies separately:
     pip install \
         opentelemetry-api \
         opentelemetry-sdk \
-        opentelemetry-exporter-jaeger \
+        opentelemetry-exporter-otlp \
         opentelemetry-opentracing-shim \
         redis \
         redis_opentracing
@@ -100,6 +100,6 @@ Useful links
 ------------
 
 - OpenTelemetry_
-- :doc:`../../instrumentation/opentracing_shim/opentracing_shim`
+- :doc:`../../shim/opentracing_shim/opentracing_shim`
 
 .. _OpenTelemetry: https://github.com/open-telemetry/opentelemetry-python/

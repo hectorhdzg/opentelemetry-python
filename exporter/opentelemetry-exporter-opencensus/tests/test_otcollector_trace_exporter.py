@@ -16,7 +16,9 @@ import unittest
 from unittest import mock
 
 import grpc
-from google.protobuf.timestamp_pb2 import Timestamp
+from google.protobuf.timestamp_pb2 import (  # pylint: disable=no-name-in-module
+    Timestamp,
+)
 from opencensus.proto.trace.v1 import trace_pb2
 
 import opentelemetry.exporter.opencensus.util as utils
@@ -26,25 +28,32 @@ from opentelemetry.exporter.opencensus.trace_exporter import (
     translate_to_collector,
 )
 from opentelemetry.sdk import trace
+from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SpanExportResult
+from opentelemetry.test.globals_test import TraceGlobalsTest
 from opentelemetry.trace import TraceFlags
 
 
 # pylint: disable=no-member
-class TestCollectorSpanExporter(unittest.TestCase):
+class TestCollectorSpanExporter(TraceGlobalsTest, unittest.TestCase):
     def test_constructor(self):
         mock_get_node = mock.Mock()
         patch = mock.patch(
             "opentelemetry.exporter.opencensus.util.get_node",
             side_effect=mock_get_node,
         )
-        service_name = "testServiceName"
+        trace_api.set_tracer_provider(
+            TracerProvider(
+                resource=Resource.create({SERVICE_NAME: "testServiceName"})
+            )
+        )
+
         host_name = "testHostName"
         client = grpc.insecure_channel("")
         endpoint = "testEndpoint"
         with patch:
             exporter = OpenCensusSpanExporter(
-                service_name=service_name,
                 host_name=host_name,
                 endpoint=endpoint,
                 client=client,
@@ -52,7 +61,7 @@ class TestCollectorSpanExporter(unittest.TestCase):
 
         self.assertIs(exporter.client, client)
         self.assertEqual(exporter.endpoint, endpoint)
-        mock_get_node.assert_called_with(service_name, host_name)
+        mock_get_node.assert_called_with("testServiceName", host_name)
 
     def test_get_collector_span_kind(self):
         result = utils.get_collector_span_kind(trace_api.SpanKind.SERVER)
@@ -77,13 +86,13 @@ class TestCollectorSpanExporter(unittest.TestCase):
         trace_id = 0x6E0C63257DE34C926F9EFCD03927272E
         span_id = 0x34BF92DEEFC58C92
         parent_id = 0x1111111111111111
-        base_time = 683647322 * 10 ** 9  # in ns
+        base_time = 683647322 * 10**9  # in ns
         start_times = (
             base_time,
-            base_time + 150 * 10 ** 6,
-            base_time + 300 * 10 ** 6,
+            base_time + 150 * 10**6,
+            base_time + 300 * 10**6,
         )
-        durations = (50 * 10 ** 6, 100 * 10 ** 6, 200 * 10 ** 6)
+        durations = (50 * 10**6, 100 * 10**6, 200 * 10**6)
         end_times = (
             start_times[0] + durations[0],
             start_times[1] + durations[1],
@@ -94,7 +103,7 @@ class TestCollectorSpanExporter(unittest.TestCase):
             span_id,
             is_remote=False,
             trace_flags=TraceFlags(TraceFlags.SAMPLED),
-            trace_state=trace_api.TraceState({"testKey": "testValue"}),
+            trace_state=trace_api.TraceState([("testkey", "testvalue")]),
         )
         parent_span_context = trace_api.SpanContext(
             trace_id, parent_id, is_remote=False
@@ -107,7 +116,7 @@ class TestCollectorSpanExporter(unittest.TestCase):
             "annotation_string": "annotation_test",
             "key_float": 0.3,
         }
-        event_timestamp = base_time + 50 * 10 ** 6
+        event_timestamp = base_time + 50 * 10**6
         event = trace.Event(
             name="event0",
             timestamp=event_timestamp,
@@ -146,16 +155,13 @@ class TestCollectorSpanExporter(unittest.TestCase):
         otel_spans[0].set_attribute("key_string", "hello_world")
         otel_spans[0].set_attribute("key_float", 111.22)
         otel_spans[0].set_attribute("key_int", 333)
-        otel_spans[0].set_status(
-            trace_api.Status(
-                trace_api.status.StatusCode.OK, "test description",
-            )
-        )
+        otel_spans[0].set_status(trace_api.Status(trace_api.StatusCode.OK))
         otel_spans[0].end(end_time=end_times[0])
         otel_spans[1].start(start_time=start_times[1])
         otel_spans[1].set_status(
             trace_api.Status(
-                trace_api.status.StatusCode.ERROR, {"test", "val"},
+                trace_api.StatusCode.ERROR,
+                {"test", "val"},
             )
         )
         otel_spans[1].end(end_time=end_times[1])
@@ -196,13 +202,13 @@ class TestCollectorSpanExporter(unittest.TestCase):
             output_spans[2].parent_span_id, b"\x11\x11\x11\x11\x11\x11\x11\x11"
         )
         self.assertEqual(
-            output_spans[0].status.code, trace_api.status.StatusCode.OK.value,
+            output_spans[0].status.code,
+            trace_api.StatusCode.OK.value,
         )
-        self.assertEqual(output_spans[0].status.message, "test description")
         self.assertEqual(len(output_spans[0].tracestate.entries), 1)
-        self.assertEqual(output_spans[0].tracestate.entries[0].key, "testKey")
+        self.assertEqual(output_spans[0].tracestate.entries[0].key, "testkey")
         self.assertEqual(
-            output_spans[0].tracestate.entries[0].value, "testValue"
+            output_spans[0].tracestate.entries[0].value, "testvalue"
         )
 
         self.assertEqual(
@@ -268,7 +274,7 @@ class TestCollectorSpanExporter(unittest.TestCase):
         )
         self.assertEqual(
             output_spans[1].status.code,
-            trace_api.status.StatusCode.ERROR.value,
+            trace_api.StatusCode.ERROR.value,
         )
         self.assertEqual(
             output_spans[2].links.link[0].type,
@@ -321,3 +327,42 @@ class TestCollectorSpanExporter(unittest.TestCase):
         self.assertEqual(
             getattr(output_identifier, "host_name"), "testHostName"
         )
+
+    def test_export_service_name(self):
+        trace_api.set_tracer_provider(
+            TracerProvider(
+                resource=Resource.create({SERVICE_NAME: "testServiceName"})
+            )
+        )
+        mock_client = mock.MagicMock()
+        mock_export = mock.MagicMock()
+        mock_client.Export = mock_export
+        host_name = "testHostName"
+        collector_exporter = OpenCensusSpanExporter(
+            client=mock_client, host_name=host_name
+        )
+        self.assertEqual(
+            collector_exporter.node.service_info.name, "testServiceName"
+        )
+
+        trace_id = 0x6E0C63257DE34C926F9EFCD03927272E
+        span_id = 0x34BF92DEEFC58C92
+        span_context = trace_api.SpanContext(
+            trace_id,
+            span_id,
+            is_remote=False,
+            trace_flags=TraceFlags(TraceFlags.SAMPLED),
+        )
+        resource = Resource.create({SERVICE_NAME: "test"})
+        otel_spans = [
+            trace._Span(
+                name="test1",
+                context=span_context,
+                kind=trace_api.SpanKind.CLIENT,
+                resource=resource,
+            )
+        ]
+
+        result_status = collector_exporter.export(otel_spans)
+        self.assertEqual(SpanExportResult.SUCCESS, result_status)
+        self.assertEqual(collector_exporter.node.service_info.name, "test")

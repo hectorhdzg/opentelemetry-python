@@ -19,17 +19,14 @@ import typing
 logger = logging.getLogger(__name__)
 
 
-EXCEPTION_STATUS_FIELD = "_otel_status_code"
-
-
 class StatusCode(enum.Enum):
     """Represents the canonical set of status codes of a finished Span."""
 
-    OK = 0
-    """The operation has been validated by an Application developer or Operator to have completed successfully."""
-
-    UNSET = 1
+    UNSET = 0
     """The default status."""
+
+    OK = 1
+    """The operation has been validated by an Application developer or Operator to have completed successfully."""
 
     ERROR = 2
     """The operation contains an error."""
@@ -51,10 +48,18 @@ class Status:
     ):
         self._status_code = status_code
         self._description = None
-        if description is not None and not isinstance(description, str):
-            logger.warning("Invalid status description type, expected str")
-        else:
-            self._description = description
+
+        if description:
+            if not isinstance(description, str):
+                logger.warning("Invalid status description type, expected str")
+                return
+            if status_code is not StatusCode.ERROR:
+                logger.warning(
+                    "description should only be set when status_code is set to StatusCode.ERROR"
+                )
+                return
+
+        self._description = description
 
     @property
     def status_code(self) -> StatusCode:

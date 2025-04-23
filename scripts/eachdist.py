@@ -7,12 +7,13 @@ import shlex
 import shutil
 import subprocess
 import sys
-from collections import namedtuple
 from configparser import ConfigParser
-from datetime import datetime
 from inspect import cleandoc
 from itertools import chain
+from os.path import basename
 from pathlib import Path, PurePath
+
+from toml import load
 
 DEFAULT_ALLSEP = " "
 DEFAULT_ALLFMT = "{rel}"
@@ -26,29 +27,17 @@ def unique(elems):
             seen.add(elem)
 
 
-try:
-    subprocess_run = subprocess.run
-except AttributeError:  # Py < 3.5 compat
-    CompletedProcess = namedtuple("CompletedProcess", "returncode")
-
-    def subprocess_run(*args, **kwargs):
-        check = kwargs.pop("check", False)
-        if check:
-            subprocess.check_call(*args, **kwargs)
-            return CompletedProcess(returncode=0)
-        return CompletedProcess(returncode=subprocess.call(*args, **kwargs))
+subprocess_run = subprocess.run
 
 
 def extraargs_help(calledcmd):
     return cleandoc(
-        """
-        Additional arguments to pass on to  {}.
+        f"""
+        Additional arguments to pass on to  {calledcmd}.
 
         This is collected from any trailing arguments passed to `%(prog)s`.
         Use an initial `--` to separate them from regular arguments.
-        """.format(
-            calledcmd
-        )
+        """
     )
 
 
@@ -93,7 +82,7 @@ def parse_args(args=None):
         commands according to `format` and `--all`.
 
         Target paths are initially all Python distribution root paths
-        (as determined by the existence of setup.py, etc. files).
+        (as determined by the existence of pyproject.toml, etc. files).
         They are then augmented according to the section of the
         `PROJECT_ROOT/eachdist.ini` config file specified by the `--mode` option.
 
@@ -208,7 +197,6 @@ def parse_args(args=None):
 
     setup_instparser(instparser)
     instparser.add_argument("--editable", "-e", action="store_true")
-    instparser.add_argument("--with-test-deps", action="store_true")
     instparser.add_argument("--with-dev-deps", action="store_true")
     instparser.add_argument("--eager-upgrades", action="store_true")
 
@@ -221,7 +209,6 @@ def parse_args(args=None):
         editable=True,
         with_dev_deps=True,
         eager_upgrades=True,
-        with_test_deps=True,
     )
 
     lintparser = subparsers.add_parser(
@@ -240,12 +227,49 @@ def parse_args(args=None):
     )
 
     releaseparser = subparsers.add_parser(
-        "release", help="Prepares release, used by maintainers and CI",
+        "update_versions",
+        help="Updates version numbers, used by maintainers and CI",
     )
     releaseparser.set_defaults(func=release_args)
-    releaseparser.add_argument("--version", required=True)
+    releaseparser.add_argument("--versions", required=True)
     releaseparser.add_argument(
         "releaseargs", nargs=argparse.REMAINDER, help=extraargs_help("pytest")
+    )
+
+    patchreleaseparser = subparsers.add_parser(
+        "update_patch_versions",
+        help="Updates version numbers during patch release, used by maintainers and CI",
+    )
+    patchreleaseparser.set_defaults(func=patch_release_args)
+    patchreleaseparser.add_argument("--stable_version", required=True)
+    patchreleaseparser.add_argument("--unstable_version", required=True)
+    patchreleaseparser.add_argument("--stable_version_prev", required=True)
+    patchreleaseparser.add_argument("--unstable_version_prev", required=True)
+
+    fmtparser = subparsers.add_parser(
+        "format",
+        help="Formats all source code with black and isort.",
+    )
+    fmtparser.set_defaults(func=format_args)
+    fmtparser.add_argument(
+        "--path",
+        required=False,
+        help="Format only this path instead of entire repository",
+    )
+
+    versionparser = subparsers.add_parser(
+        "version",
+        help="Get the version for a release",
+    )
+    versionparser.set_defaults(func=version_args)
+    versionparser.add_argument(
+        "--mode",
+        "-m",
+        default="DEFAULT",
+        help=cleandoc(
+            """Section of config file to use for target selection configuration.
+        See description of exec for available options."""
+        ),
     )
 
     return parser.parse_args(args)
@@ -354,7 +378,7 @@ def runsubprocess(dry_run, params, *args, **kwargs):
 
     check = kwargs.pop("check")  # Enforce specifying check
 
-    print(">>>", cmdstr, file=sys.stderr)
+    print(">>>", cmdstr, file=sys.stderr, flush=True)
 
     # This is a workaround for subprocess.run(['python']) leaving the virtualenv on Win32.
     # The cause for this is that when running the python.exe in a virtualenv,
@@ -367,7 +391,7 @@ def runsubprocess(dry_run, params, *args, **kwargs):
     # Only this would find the "correct" python.exe.
 
     params = list(params)
-    executable = shutil.which(params[0])  # On Win32, pytho
+    executable = shutil.which(params[0])
     if executable:
         params[0] = executable
     try:
@@ -388,7 +412,7 @@ def execute_args(args):
     rootpath = find_projectroot()
     targets = find_targets(args.mode, rootpath)
     if not targets:
-        sys.exit("Error: No targets selected (root: {})".format(rootpath))
+        sys.exit(f"Error: No targets selected (root: {rootpath})")
 
     def fmt_for_path(fmt, path):
         return fmt.format(
@@ -404,7 +428,7 @@ def execute_args(args):
         )
         if result is not None and result.returncode not in args.allowexitcode:
             print(
-                "'{}' failed with code {}".format(cmd, result.returncode),
+                f"'{cmd}' failed with code {result.returncode}",
                 file=sys.stderr,
             )
             sys.exit(result.returncode)
@@ -452,16 +476,7 @@ def install_args(args):
             check=True,
         )
 
-    allfmt = "-e 'file://{}" if args.editable else "'file://{}"
-    # packages should provide an extra_requires that is named
-    # 'test', to denote test dependencies.
-    extras = []
-    if args.with_test_deps:
-        extras.append("test")
-    if extras:
-        allfmt += "[{}]".format(",".join(extras))
-    # note the trailing single quote, to close the quote opened above.
-    allfmt += "'"
+    allfmt = "-e 'file://{}'" if args.editable else "'file://{}'"
 
     execute_args(
         parse_subargs(
@@ -474,6 +489,7 @@ def install_args(args):
             ),
         )
     )
+
     if args.with_dev_deps:
         rootpath = find_projectroot()
         runsubprocess(
@@ -503,18 +519,21 @@ def lint_args(args):
 
     runsubprocess(
         args.dry_run,
-        ("black", ".") + (("--diff", "--check") if args.check_only else ()),
+        ("black", "--config", "pyproject.toml", ".")
+        + (("--diff", "--check") if args.check_only else ()),
         cwd=rootdir,
         check=True,
     )
     runsubprocess(
         args.dry_run,
-        ("isort", "--recursive", ".")
+        ("isort", "--settings-path", ".isort.cfg", ".")
         + (("--diff", "--check-only") if args.check_only else ()),
         cwd=rootdir,
         check=True,
     )
-    runsubprocess(args.dry_run, ("flake8", rootdir), check=True)
+    runsubprocess(
+        args.dry_run, ("flake8", "--config", ".flake8", rootdir), check=True
+    )
     execute_args(
         parse_subargs(
             args, ("exec", "pylint {}", "--all", "--mode", "lintroots")
@@ -523,58 +542,13 @@ def lint_args(args):
     execute_args(
         parse_subargs(
             args,
-            ("exec", "python scripts/check_for_valid_readme.py {}", "--all",),
+            (
+                "exec",
+                "python scripts/check_for_valid_readme.py {}",
+                "--all",
+            ),
         )
     )
-
-
-def update_changelog(path, version, new_entry):
-    unreleased_changes = False
-    try:
-        with open(path) as changelog:
-            text = changelog.read()
-            if "## Version {}".format(version) in text:
-                raise AttributeError(
-                    "{} already contans version {}".format(path, version)
-                )
-        with open(path) as changelog:
-            for line in changelog:
-                if line.startswith("## Unreleased"):
-                    unreleased_changes = False
-                elif line.startswith("## "):
-                    break
-                elif len(line.strip()) > 0:
-                    unreleased_changes = True
-
-    except FileNotFoundError:
-        print("file missing: {}".format(path))
-        return
-
-    if unreleased_changes:
-        print("updating: {}".format(path))
-        text = re.sub("## Unreleased", new_entry, text)
-        with open(path, "w") as changelog:
-            changelog.write(text)
-
-
-def update_changelogs(targets, version):
-    print("updating CHANGELOG")
-    today = datetime.now().strftime("%Y-%m-%d")
-    new_entry = "## Unreleased\n\n## Version {}\n\nReleased {}".format(
-        version, today
-    )
-    errors = False
-    for target in targets:
-        try:
-            update_changelog(
-                "{}/CHANGELOG.md".format(target), version, new_entry
-            )
-        except Exception as err:  # pylint: disable=broad-except
-            print(str(err))
-            errors = True
-
-    if errors:
-        sys.exit(1)
 
 
 def find(name, path):
@@ -584,45 +558,91 @@ def find(name, path):
     return None
 
 
-def update_version_files(targets, version):
-    print("updating version.py files")
-    update_files(
-        targets,
-        version,
-        "version.py",
-        "__version__ .*",
-        '__version__ = "{}"'.format(version),
-    )
+def filter_packages(targets, packages):
+    filtered_packages = []
+    for target in targets:
+        for pkg in packages:
+            if pkg in str(target):
+                filtered_packages.append(target)
+                break
+    return filtered_packages
 
 
-def update_dependencies(targets, version):
+def update_version_files(targets, version, packages):
+    print("updating version/__init__.py files")
+
+    search = "__version__ .*"
+    replace = f'__version__ = "{version}"'
+
+    for target in filter_packages(targets, packages):
+        version_file_path = target.joinpath(
+            load(target.joinpath("pyproject.toml"))["tool"]["hatch"][
+                "version"
+            ]["path"]
+        )
+
+        with open(version_file_path) as file:
+            text = file.read()
+
+        if replace in text:
+            print(f"{version_file_path} already contains {replace}")
+            continue
+
+        with open(version_file_path, "w", encoding="utf-8") as file:
+            file.write(re.sub(search, replace, text))
+
+
+def update_dependencies(targets, version, packages):
     print("updating dependencies")
-    update_files(
-        targets,
-        version,
-        "setup.cfg",
-        r"(opentelemetry-.*)==(.*)",
-        r"\1== " + version,
-    )
+    # PEP 508 allowed specifier operators
+    operators = ["==", "!=", "<=", ">=", "<", ">", "===", "~=", "="]
+    operators_pattern = "|".join(re.escape(op) for op in operators)
+
+    for pkg in packages:
+        search = rf"({basename(pkg)}[^,]*)({operators_pattern})(.*\.dev)"
+        replace = r"\1\2 " + version
+        update_files(
+            targets,
+            "pyproject.toml",
+            search,
+            replace,
+        )
 
 
-def update_files(targets, version, filename, search, replace):
+def update_patch_dependencies(targets, version, prev_version, packages):
+    print("updating patch dependencies")
+    # PEP 508 allowed specifier operators
+    operators = ["==", "!=", "<=", ">=", "<", ">", "===", "~=", "="]
+    operators_pattern = "|".join(re.escape(op) for op in operators)
+
+    for pkg in packages:
+        search = rf"({basename(pkg)}[^,]*?)(\s?({operators_pattern})\s?)(.*{prev_version})"
+        replace = r"\g<1>\g<2>" + version
+        print(f"{search=}\t{replace=}\t{pkg=}")
+        update_files(
+            targets,
+            "pyproject.toml",
+            search,
+            replace,
+        )
+
+
+def update_files(targets, filename, search, replace):
     errors = False
     for target in targets:
         curr_file = find(filename, target)
         if curr_file is None:
-            print("file missing: {}/{}".format(target, filename))
+            print(f"file missing: {target}/{filename}")
             continue
 
-        with open(curr_file) as _file:
+        with open(curr_file, encoding="utf-8") as _file:
             text = _file.read()
 
-        if version in text:
-            print("{} already contans version {}".format(curr_file, version))
-            errors = True
+        if replace in text:
+            print(f"{curr_file} already contains {replace}")
             continue
 
-        with open(curr_file, "w") as _file:
+        with open(curr_file, "w", encoding="utf-8") as _file:
             _file.write(re.sub(search, replace, text))
 
     if errors:
@@ -634,10 +654,44 @@ def release_args(args):
 
     rootpath = find_projectroot()
     targets = list(find_targets_unordered(rootpath))
-    version = args.version
-    update_dependencies(targets, version)
-    update_version_files(targets, version)
-    update_changelogs(targets, version)
+    cfg = ConfigParser()
+    cfg.read(str(find_projectroot() / "eachdist.ini"))
+    versions = args.versions
+    updated_versions = []
+    for group in versions.split(","):
+        mcfg = cfg[group]
+        version = mcfg["version"]
+        updated_versions.append(version)
+        packages = mcfg["packages"].split()
+        print(f"update {group} packages to {version}")
+        update_dependencies(targets, version, packages)
+        update_version_files(targets, version, packages)
+
+
+def patch_release_args(args):
+    print("preparing patch release")
+
+    rootpath = find_projectroot()
+    targets = list(find_targets_unordered(rootpath))
+    cfg = ConfigParser()
+    cfg.read(str(find_projectroot() / "eachdist.ini"))
+    # stable
+    mcfg = cfg["stable"]
+    packages = mcfg["packages"].split()
+    print(f"update stable packages to {args.stable_version}")
+    update_patch_dependencies(
+        targets, args.stable_version, args.stable_version_prev, packages
+    )
+    update_version_files(targets, args.stable_version, packages)
+
+    # prerelease
+    mcfg = cfg["prerelease"]
+    packages = mcfg["packages"].split()
+    print(f"update prerelease packages to {args.unstable_version}")
+    update_patch_dependencies(
+        targets, args.unstable_version, args.unstable_version_prev, packages
+    )
+    update_version_files(targets, args.unstable_version, packages)
 
 
 def test_args(args):
@@ -653,6 +707,38 @@ def test_args(args):
             ),
         )
     )
+
+
+def format_args(args):
+    root_dir = format_dir = str(find_projectroot())
+    if args.path:
+        format_dir = os.path.join(format_dir, args.path)
+
+    runsubprocess(
+        args.dry_run,
+        ("black", "--config", f"{root_dir}/pyproject.toml", "."),
+        cwd=format_dir,
+        check=True,
+    )
+    runsubprocess(
+        args.dry_run,
+        (
+            "isort",
+            "--settings-path",
+            f"{root_dir}/.isort.cfg",
+            "--profile",
+            "black",
+            ".",
+        ),
+        cwd=format_dir,
+        check=True,
+    )
+
+
+def version_args(args):
+    cfg = ConfigParser()
+    cfg.read(str(find_projectroot() / "eachdist.ini"))
+    print(cfg[args.mode]["version"])
 
 
 def main():

@@ -12,18 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import typing
+from logging import getLogger
+from re import compile
 from types import MappingProxyType
+from typing import Dict, Mapping, Optional
 
-from opentelemetry.context import get_value, set_value
+from opentelemetry.context import create_key, get_value, set_value
 from opentelemetry.context.context import Context
+from opentelemetry.util.re import (
+    _BAGGAGE_PROPERTY_FORMAT,
+    _KEY_FORMAT,
+    _VALUE_FORMAT,
+)
 
-_BAGGAGE_KEY = "baggage"
+_BAGGAGE_KEY = create_key("baggage")
+_logger = getLogger(__name__)
+
+_KEY_PATTERN = compile(_KEY_FORMAT)
+_VALUE_PATTERN = compile(_VALUE_FORMAT)
+_PROPERT_PATTERN = compile(_BAGGAGE_PROPERTY_FORMAT)
 
 
 def get_all(
-    context: typing.Optional[Context] = None,
-) -> typing.Mapping[str, object]:
+    context: Optional[Context] = None,
+) -> Mapping[str, object]:
     """Returns the name/value pairs in the Baggage
 
     Args:
@@ -32,15 +44,12 @@ def get_all(
     Returns:
         The name/value pairs in the Baggage
     """
-    baggage = get_value(_BAGGAGE_KEY, context=context)
-    if isinstance(baggage, dict):
-        return MappingProxyType(baggage.copy())
-    return MappingProxyType({})
+    return MappingProxyType(_get_baggage_value(context=context))
 
 
 def get_baggage(
-    name: str, context: typing.Optional[Context] = None
-) -> typing.Optional[object]:
+    name: str, context: Optional[Context] = None
+) -> Optional[object]:
     """Provides access to the value for a name/value pair in the
     Baggage
 
@@ -52,11 +61,11 @@ def get_baggage(
         The value associated with the given name, or null if the given name is
         not present.
     """
-    return get_all(context=context).get(name)
+    return _get_baggage_value(context=context).get(name)
 
 
 def set_baggage(
-    name: str, value: object, context: typing.Optional[Context] = None
+    name: str, value: object, context: Optional[Context] = None
 ) -> Context:
     """Sets a value in the Baggage
 
@@ -68,14 +77,12 @@ def set_baggage(
     Returns:
         A Context with the value updated
     """
-    baggage = dict(get_all(context=context))
+    baggage = _get_baggage_value(context=context).copy()
     baggage[name] = value
     return set_value(_BAGGAGE_KEY, baggage, context=context)
 
 
-def remove_baggage(
-    name: str, context: typing.Optional[Context] = None
-) -> Context:
+def remove_baggage(name: str, context: Optional[Context] = None) -> Context:
     """Removes a value from the Baggage
 
     Args:
@@ -85,13 +92,13 @@ def remove_baggage(
     Returns:
         A Context with the name/value removed
     """
-    baggage = dict(get_all(context=context))
+    baggage = _get_baggage_value(context=context).copy()
     baggage.pop(name, None)
 
     return set_value(_BAGGAGE_KEY, baggage, context=context)
 
 
-def clear(context: typing.Optional[Context] = None) -> Context:
+def clear(context: Optional[Context] = None) -> Context:
     """Removes all values from the Baggage
 
     Args:
@@ -101,3 +108,29 @@ def clear(context: typing.Optional[Context] = None) -> Context:
         A Context with all baggage entries removed
     """
     return set_value(_BAGGAGE_KEY, {}, context=context)
+
+
+def _get_baggage_value(context: Optional[Context] = None) -> Dict[str, object]:
+    baggage = get_value(_BAGGAGE_KEY, context=context)
+    if isinstance(baggage, dict):
+        return baggage
+    return {}
+
+
+def _is_valid_key(name: str) -> bool:
+    return _KEY_PATTERN.fullmatch(str(name)) is not None
+
+
+def _is_valid_value(value: object) -> bool:
+    parts = str(value).split(";")
+    is_valid_value = _VALUE_PATTERN.fullmatch(parts[0]) is not None
+    if len(parts) > 1:  # one or more properties metadata
+        for property in parts[1:]:
+            if _PROPERT_PATTERN.fullmatch(property) is None:
+                is_valid_value = False
+                break
+    return is_valid_value
+
+
+def _is_valid_pair(key: str, value: str) -> bool:
+    return _is_valid_key(key) and _is_valid_value(value)

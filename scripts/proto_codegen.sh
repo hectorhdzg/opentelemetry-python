@@ -12,7 +12,7 @@
 #   PROTO_REPO_DIR - the path to an existing checkout of the opentelemetry-proto repo
 
 # Pinned commit/branch/tag for the current version used in opentelemetry-proto python package.
-PROTO_REPO_BRANCH_OR_COMMIT="v0.5.0"
+PROTO_REPO_BRANCH_OR_COMMIT="v1.2.0"
 
 set -e
 
@@ -32,8 +32,10 @@ echo "Creating temporary virtualenv at $venv_dir using $(python3 --version)"
 python3 -m venv $venv_dir
 source $venv_dir/bin/activate
 python -m pip install \
-    -c $repo_root/dev-requirements.txt \
+    -c $repo_root/gen-requirements.txt \
     grpcio-tools mypy-protobuf
+echo 'python -m grpc_tools.protoc --version'
+python -m grpc_tools.protoc --version
 
 # Clone the proto repo if it doesn't exist
 if [ ! -d "$PROTO_REPO_DIR" ]; then
@@ -64,9 +66,12 @@ python -m grpc_tools.protoc \
 
 # generate grpc output only for protos with service definitions
 service_protos=$(grep -REl "service \w+ {" $PROTO_REPO_DIR/opentelemetry/)
+
 python -m grpc_tools.protoc \
     -I $PROTO_REPO_DIR \
     --python_out=. \
     --mypy_out=. \
     --grpc_python_out=. \
     $service_protos
+
+echo "Please update ./opentelemetry-proto/README.rst to include the updated version."

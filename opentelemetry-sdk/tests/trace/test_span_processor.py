@@ -16,9 +16,12 @@ import abc
 import time
 import typing
 import unittest
+from platform import python_implementation, system
 from threading import Event
 from typing import Optional
 from unittest import mock
+
+from pytest import mark
 
 from opentelemetry import trace as trace_api
 from opentelemetry.context import Context
@@ -154,7 +157,7 @@ class MultiSpanProcessorTestBase(abc.ABC):
     @staticmethod
     def create_default_span() -> trace_api.Span:
         span_context = trace_api.SpanContext(37, 73, is_remote=False)
-        return trace_api.DefaultSpan(span_context)
+        return trace_api.NonRecordingSpan(span_context)
 
     def test_on_start(self):
         multi_processor = self.create_multi_span_processor()
@@ -266,6 +269,10 @@ class TestConcurrentMultiSpanProcessor(
     ) -> trace.ConcurrentMultiSpanProcessor:
         return trace.ConcurrentMultiSpanProcessor(3)
 
+    @mark.skipif(
+        python_implementation() == "PyPy" and system() == "Windows",
+        reason="This test randomly fails in Windows with PyPy",
+    )
     def test_force_flush_late_by_timeout(self):
         multi_processor = trace.ConcurrentMultiSpanProcessor(5)
         wait_event = Event()

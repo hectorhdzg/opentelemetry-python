@@ -6,6 +6,11 @@ OpenTelemetry Python Proto
 .. |pypi| image:: https://badge.fury.io/py/opentelemetry-proto.svg
    :target: https://pypi.org/project/opentelemetry-proto/
 
+This library contains the generated code for OpenTelemetry protobuf data model. The code in the current
+package was generated using the v1.2.0 release_ of opentelemetry-proto.
+
+.. _release: https://github.com/open-telemetry/opentelemetry-proto/releases/tag/v1.2.0
+
 Installation
 ------------
 
@@ -32,4 +37,4 @@ References
 
 * `OpenTelemetry Project <https://opentelemetry.io/>`_
 * `OpenTelemetry Proto <https://github.com/open-telemetry/opentelemetry-proto>`_
-* `proto_codegen.sh script <https://github.com/open-telemetry/opentelemetry-python/blob/master/scripts/proto_codegen.sh>`_
+* `proto_codegen.sh script <https://github.com/open-telemetry/opentelemetry-python/blob/main/scripts/proto_codegen.sh>`_

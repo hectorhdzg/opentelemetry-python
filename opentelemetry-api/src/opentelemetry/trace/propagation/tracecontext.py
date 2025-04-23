@@ -15,39 +15,15 @@
 import re
 import typing
 
-import opentelemetry.trace as trace
+from opentelemetry import trace
 from opentelemetry.context.context import Context
-from opentelemetry.trace.propagation import textmap
-
-#    Keys and values are strings of up to 256 printable US-ASCII characters.
-#    Implementations should conform to the `W3C Trace Context - Tracestate`_
-#    spec, which describes additional restrictions on valid field values.
-#
-#    .. _W3C Trace Context - Tracestate:
-#        https://www.w3.org/TR/trace-context/#tracestate-field
-
-_KEY_WITHOUT_VENDOR_FORMAT = r"[a-z][_0-9a-z\-\*\/]{0,255}"
-_KEY_WITH_VENDOR_FORMAT = (
-    r"[a-z0-9][_0-9a-z\-\*\/]{0,240}@[a-z][_0-9a-z\-\*\/]{0,13}"
-)
-
-_KEY_FORMAT = _KEY_WITHOUT_VENDOR_FORMAT + "|" + _KEY_WITH_VENDOR_FORMAT
-_VALUE_FORMAT = (
-    r"[\x20-\x2b\x2d-\x3c\x3e-\x7e]{0,255}[\x21-\x2b\x2d-\x3c\x3e-\x7e]"
-)
-
-_DELIMITER_FORMAT = "[ \t]*,[ \t]*"
-_MEMBER_FORMAT = "({})(=)({})[ \t]*".format(_KEY_FORMAT, _VALUE_FORMAT)
-
-_DELIMITER_FORMAT_RE = re.compile(_DELIMITER_FORMAT)
-_MEMBER_FORMAT_RE = re.compile(_MEMBER_FORMAT)
-
-_TRACECONTEXT_MAXIMUM_TRACESTATE_KEYS = 32
+from opentelemetry.propagators import textmap
+from opentelemetry.trace import format_span_id, format_trace_id
+from opentelemetry.trace.span import TraceState
 
 
 class TraceContextTextMapPropagator(textmap.TextMapPropagator):
-    """Extracts and injects using w3c TraceContext's headers.
-    """
+    """Extracts and injects using w3c TraceContext's headers."""
 
     _TRACEPARENT_HEADER_NAME = "traceparent"
     _TRACESTATE_HEADER_NAME = "tracestate"
@@ -59,129 +35,84 @@ class TraceContextTextMapPropagator(textmap.TextMapPropagator):
 
     def extract(
         self,
-        getter: textmap.Getter[textmap.TextMapPropagatorT],
-        carrier: textmap.TextMapPropagatorT,
+        carrier: textmap.CarrierT,
         context: typing.Optional[Context] = None,
+        getter: textmap.Getter[textmap.CarrierT] = textmap.default_getter,
     ) -> Context:
         """Extracts SpanContext from the carrier.
 
-        See `opentelemetry.trace.propagation.textmap.TextMapPropagator.extract`
+        See `opentelemetry.propagators.textmap.TextMapPropagator.extract`
         """
+        if context is None:
+            context = Context()
+
         header = getter.get(carrier, self._TRACEPARENT_HEADER_NAME)
 
         if not header:
-            return trace.set_span_in_context(trace.INVALID_SPAN, context)
+            return context
 
         match = re.search(self._TRACEPARENT_HEADER_FORMAT_RE, header[0])
         if not match:
-            return trace.set_span_in_context(trace.INVALID_SPAN, context)
+            return context
 
-        version = match.group(1)
-        trace_id = match.group(2)
-        span_id = match.group(3)
-        trace_flags = match.group(4)
+        version: str = match.group(1)
+        trace_id: str = match.group(2)
+        span_id: str = match.group(3)
+        trace_flags: str = match.group(4)
 
         if trace_id == "0" * 32 or span_id == "0" * 16:
-            return trace.set_span_in_context(trace.INVALID_SPAN, context)
+            return context
 
         if version == "00":
-            if match.group(5):
-                return trace.set_span_in_context(trace.INVALID_SPAN, context)
+            if match.group(5):  # type: ignore
+                return context
         if version == "ff":
-            return trace.set_span_in_context(trace.INVALID_SPAN, context)
+            return context
 
         tracestate_headers = getter.get(carrier, self._TRACESTATE_HEADER_NAME)
-        tracestate = _parse_tracestate(tracestate_headers)
+        if tracestate_headers is None:
+            tracestate = None
+        else:
+            tracestate = TraceState.from_header(tracestate_headers)
 
         span_context = trace.SpanContext(
             trace_id=int(trace_id, 16),
             span_id=int(span_id, 16),
             is_remote=True,
-            trace_flags=trace.TraceFlags(trace_flags),
+            trace_flags=trace.TraceFlags(int(trace_flags, 16)),
             trace_state=tracestate,
         )
         return trace.set_span_in_context(
-            trace.DefaultSpan(span_context), context
+            trace.NonRecordingSpan(span_context), context
         )
 
     def inject(
         self,
-        set_in_carrier: textmap.Setter[textmap.TextMapPropagatorT],
-        carrier: textmap.TextMapPropagatorT,
+        carrier: textmap.CarrierT,
         context: typing.Optional[Context] = None,
+        setter: textmap.Setter[textmap.CarrierT] = textmap.default_setter,
     ) -> None:
         """Injects SpanContext into the carrier.
 
-        See `opentelemetry.trace.propagation.textmap.TextMapPropagator.inject`
+        See `opentelemetry.propagators.textmap.TextMapPropagator.inject`
         """
         span = trace.get_current_span(context)
         span_context = span.get_span_context()
         if span_context == trace.INVALID_SPAN_CONTEXT:
             return
-        traceparent_string = "00-{:032x}-{:016x}-{:02x}".format(
-            span_context.trace_id,
-            span_context.span_id,
-            span_context.trace_flags,
-        )
-        set_in_carrier(
-            carrier, self._TRACEPARENT_HEADER_NAME, traceparent_string
-        )
+        traceparent_string = f"00-{format_trace_id(span_context.trace_id)}-{format_span_id(span_context.span_id)}-{span_context.trace_flags:02x}"
+        setter.set(carrier, self._TRACEPARENT_HEADER_NAME, traceparent_string)
         if span_context.trace_state:
-            tracestate_string = _format_tracestate(span_context.trace_state)
-            set_in_carrier(
+            tracestate_string = span_context.trace_state.to_header()
+            setter.set(
                 carrier, self._TRACESTATE_HEADER_NAME, tracestate_string
             )
 
+    @property
+    def fields(self) -> typing.Set[str]:
+        """Returns a set with the fields set in `inject`.
 
-def _parse_tracestate(header_list: typing.List[str]) -> trace.TraceState:
-    """Parse one or more w3c tracestate header into a TraceState.
-
-    Args:
-        string: the value of the tracestate header.
-
-    Returns:
-        A valid TraceState that contains values extracted from
-        the tracestate header.
-
-        If the format of one headers is illegal, all values will
-        be discarded and an empty tracestate will be returned.
-
-        If the number of keys is beyond the maximum, all values
-        will be discarded and an empty tracestate will be returned.
-    """
-    tracestate = trace.TraceState()
-    value_count = 0
-    for header in header_list:
-        for member in re.split(_DELIMITER_FORMAT_RE, header):
-            # empty members are valid, but no need to process further.
-            if not member:
-                continue
-            match = _MEMBER_FORMAT_RE.fullmatch(member)
-            if not match:
-                # TODO: log this?
-                return trace.TraceState()
-            key, _eq, value = match.groups()
-            if key in tracestate:  # pylint:disable=E1135
-                # duplicate keys are not legal in
-                # the header, so we will remove
-                return trace.TraceState()
-            # typing.Dict's update is not recognized by pylint:
-            # https://github.com/PyCQA/pylint/issues/2420
-            tracestate[key] = value  # pylint:disable=E1137
-            value_count += 1
-            if value_count > _TRACECONTEXT_MAXIMUM_TRACESTATE_KEYS:
-                return trace.TraceState()
-    return tracestate
-
-
-def _format_tracestate(tracestate: trace.TraceState) -> str:
-    """Parse a w3c tracestate header into a TraceState.
-
-    Args:
-        tracestate: the tracestate header to write
-
-    Returns:
-        A string that adheres to the w3c tracestate
-        header format.
-    """
-    return ",".join(key + "=" + value for key, value in tracestate.items())
+        See
+        `opentelemetry.propagators.textmap.TextMapPropagator.fields`
+        """
+        return {self._TRACEPARENT_HEADER_NAME, self._TRACESTATE_HEADER_NAME}

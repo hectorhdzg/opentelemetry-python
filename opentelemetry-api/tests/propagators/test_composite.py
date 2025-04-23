@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# type: ignore
+
 import unittest
 from unittest.mock import Mock
 
-from opentelemetry.propagators.composite import CompositeHTTPPropagator
+from opentelemetry.propagators.composite import CompositePropagator
 
 
 def get_as_list(dict_object, key):
@@ -24,14 +26,16 @@ def get_as_list(dict_object, key):
 
 
 def mock_inject(name, value="data"):
-    def wrapped(setter, carrier=None, context=None):
+    def wrapped(carrier=None, context=None, setter=None):
         carrier[name] = value
+        setter.set({}, f"inject_field_{name}_0", None)
+        setter.set({}, f"inject_field_{name}_1", None)
 
     return wrapped
 
 
 def mock_extract(name, value="context"):
-    def wrapped(getter, carrier=None, context=None):
+    def wrapped(carrier=None, context=None, getter=None):
         new_context = context.copy()
         new_context[name] = value
         return new_context
@@ -39,69 +43,98 @@ def mock_extract(name, value="context"):
     return wrapped
 
 
+def mock_fields(name):
+    return {f"inject_field_{name}_0", f"inject_field_{name}_1"}
+
+
 class TestCompositePropagator(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.mock_propagator_0 = Mock(
-            inject=mock_inject("mock-0"), extract=mock_extract("mock-0")
+            inject=mock_inject("mock-0"),
+            extract=mock_extract("mock-0"),
+            fields=mock_fields("mock-0"),
         )
         cls.mock_propagator_1 = Mock(
-            inject=mock_inject("mock-1"), extract=mock_extract("mock-1")
+            inject=mock_inject("mock-1"),
+            extract=mock_extract("mock-1"),
+            fields=mock_fields("mock-1"),
         )
         cls.mock_propagator_2 = Mock(
             inject=mock_inject("mock-0", value="data2"),
             extract=mock_extract("mock-0", value="context2"),
+            fields=mock_fields("mock-0"),
         )
 
     def test_no_propagators(self):
-        propagator = CompositeHTTPPropagator([])
+        propagator = CompositePropagator([])
         new_carrier = {}
-        propagator.inject(dict.__setitem__, carrier=new_carrier)
+        propagator.inject(new_carrier)
         self.assertEqual(new_carrier, {})
 
         context = propagator.extract(
-            get_as_list, carrier=new_carrier, context={}
+            carrier=new_carrier, context={}, getter=get_as_list
         )
         self.assertEqual(context, {})
 
     def test_single_propagator(self):
-        propagator = CompositeHTTPPropagator([self.mock_propagator_0])
+        propagator = CompositePropagator([self.mock_propagator_0])
 
         new_carrier = {}
-        propagator.inject(dict.__setitem__, carrier=new_carrier)
+        propagator.inject(new_carrier)
         self.assertEqual(new_carrier, {"mock-0": "data"})
 
         context = propagator.extract(
-            get_as_list, carrier=new_carrier, context={}
+            carrier=new_carrier, context={}, getter=get_as_list
         )
         self.assertEqual(context, {"mock-0": "context"})
 
     def test_multiple_propagators(self):
-        propagator = CompositeHTTPPropagator(
+        propagator = CompositePropagator(
             [self.mock_propagator_0, self.mock_propagator_1]
         )
 
         new_carrier = {}
-        propagator.inject(dict.__setitem__, carrier=new_carrier)
+        propagator.inject(new_carrier)
         self.assertEqual(new_carrier, {"mock-0": "data", "mock-1": "data"})
 
         context = propagator.extract(
-            get_as_list, carrier=new_carrier, context={}
+            carrier=new_carrier, context={}, getter=get_as_list
         )
         self.assertEqual(context, {"mock-0": "context", "mock-1": "context"})
 
     def test_multiple_propagators_same_key(self):
         # test that when multiple propagators extract/inject the same
         # key, the later propagator values are extracted/injected
-        propagator = CompositeHTTPPropagator(
+        propagator = CompositePropagator(
             [self.mock_propagator_0, self.mock_propagator_2]
         )
 
         new_carrier = {}
-        propagator.inject(dict.__setitem__, carrier=new_carrier)
+        propagator.inject(new_carrier)
         self.assertEqual(new_carrier, {"mock-0": "data2"})
 
         context = propagator.extract(
-            get_as_list, carrier=new_carrier, context={}
+            carrier=new_carrier, context={}, getter=get_as_list
         )
         self.assertEqual(context, {"mock-0": "context2"})
+
+    def test_fields(self):
+        propagator = CompositePropagator(
+            [
+                self.mock_propagator_0,
+                self.mock_propagator_1,
+                self.mock_propagator_2,
+            ]
+        )
+
+        mock_setter = Mock()
+
+        propagator.inject({}, setter=mock_setter)
+
+        inject_fields = set()
+
+        for mock_call in mock_setter.mock_calls:
+            inject_fields.add(mock_call[1][1])
+
+        self.assertEqual(inject_fields, propagator.fields)

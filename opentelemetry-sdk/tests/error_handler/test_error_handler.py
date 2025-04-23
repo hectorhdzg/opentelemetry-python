@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# pylint: disable=broad-except
 
 from logging import ERROR
 from unittest import TestCase
@@ -25,16 +24,16 @@ from opentelemetry.sdk.error_handler import (
 
 
 class TestErrorHandler(TestCase):
-    @patch("opentelemetry.sdk.error_handler.iter_entry_points")
-    def test_default_error_handler(self, mock_iter_entry_points):
-
+    @patch("opentelemetry.sdk.error_handler.entry_points")
+    def test_default_error_handler(self, mock_entry_points):
         with self.assertLogs(logger, ERROR):
             with GlobalErrorHandler():
+                # pylint: disable=broad-exception-raised
                 raise Exception("some exception")
 
     # pylint: disable=no-self-use
-    @patch("opentelemetry.sdk.error_handler.iter_entry_points")
-    def test_plugin_error_handler(self, mock_iter_entry_points):
+    @patch("opentelemetry.sdk.error_handler.entry_points")
+    def test_plugin_error_handler(self, mock_entry_points):
         class ZeroDivisionErrorHandler(ErrorHandler, ZeroDivisionError):
             # pylint: disable=arguments-differ
 
@@ -54,7 +53,7 @@ class TestErrorHandler(TestCase):
             **{"load.return_value": AssertionErrorHandler}
         )
 
-        mock_iter_entry_points.configure_mock(
+        mock_entry_points.configure_mock(
             **{
                 "return_value": [
                     mock_entry_point_zero_division_error_handler,
@@ -78,8 +77,8 @@ class TestErrorHandler(TestCase):
 
         AssertionErrorHandler._handle.assert_called_with(error)
 
-    @patch("opentelemetry.sdk.error_handler.iter_entry_points")
-    def test_error_in_handler(self, mock_iter_entry_points):
+    @patch("opentelemetry.sdk.error_handler.entry_points")
+    def test_error_in_handler(self, mock_entry_points):
         class ErrorErrorHandler(ErrorHandler, ZeroDivisionError):
             # pylint: disable=arguments-differ
 
@@ -91,7 +90,7 @@ class TestErrorHandler(TestCase):
             **{"load.return_value": ErrorErrorHandler}
         )
 
-        mock_iter_entry_points.configure_mock(
+        mock_entry_points.configure_mock(
             **{"return_value": [mock_entry_point_error_error_handler]}
         )
 
@@ -102,11 +101,8 @@ class TestErrorHandler(TestCase):
                 raise error
 
     # pylint: disable=no-self-use
-    @patch("opentelemetry.sdk.error_handler.iter_entry_points")
-    def test_plugin_error_handler_context_manager(
-        self, mock_iter_entry_points
-    ):
-
+    @patch("opentelemetry.sdk.error_handler.entry_points")
+    def test_plugin_error_handler_context_manager(self, mock_entry_points):
         mock_error_handler_instance = Mock()
 
         class MockErrorHandlerClass(IndexError):
@@ -118,7 +114,7 @@ class TestErrorHandler(TestCase):
             **{"load.return_value": MockErrorHandlerClass}
         )
 
-        mock_iter_entry_points.configure_mock(
+        mock_entry_points.configure_mock(
             **{"return_value": [mock_entry_point_error_handler]}
         )
 

@@ -1,14 +1,13 @@
 opentelemetry.sdk.metrics package
-==========================================
+==================================
 
 Submodules
 ----------
 
 .. toctree::
 
-   metrics.export.aggregate
-   metrics.export.processor
-   util.instrumentation
+   metrics.export
+   metrics.view
 
 .. automodule:: opentelemetry.sdk.metrics
     :members:

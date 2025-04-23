@@ -62,7 +62,7 @@ exception to standard logging, the exception won't be raised any further.
 from abc import ABC, abstractmethod
 from logging import getLogger
 
-from pkg_resources import iter_entry_points
+from opentelemetry.util._importlib_metadata import entry_points
 
 logger = getLogger(__name__)
 
@@ -75,7 +75,7 @@ class ErrorHandler(ABC):
         """
 
 
-class DefaultErrorHandler(ErrorHandler):
+class _DefaultErrorHandler(ErrorHandler):
     """
     Default error handler
 
@@ -84,7 +84,6 @@ class DefaultErrorHandler(ErrorHandler):
 
     # pylint: disable=useless-return
     def _handle(self, error: Exception, *args, **kwargs):
-
         logger.exception("Error handled by default error handler: ")
         return None
 
@@ -111,39 +110,33 @@ class GlobalErrorHandler:
 
     # pylint: disable=no-self-use
     def __exit__(self, exc_type, exc_value, traceback):
-
         if exc_value is None:
-
             return None
 
         plugin_handled = False
 
-        for error_handler_entry_point in iter_entry_points(
-            "opentelemetry_error_handler"
-        ):
+        error_handler_entry_points = entry_points(
+            group="opentelemetry_error_handler"
+        )
 
+        for error_handler_entry_point in error_handler_entry_points:
             error_handler_class = error_handler_entry_point.load()
 
             if issubclass(error_handler_class, exc_value.__class__):
-
                 try:
-
                     error_handler_class()._handle(exc_value)
                     plugin_handled = True
 
-                # pylint: disable=broad-except
+                # pylint: disable=broad-exception-caught
                 except Exception as error_handling_error:
-
                     logger.exception(
-                        "%s error while handling error"
-                        " %s by error handler %s",
+                        "%s error while handling error %s by error handler %s",
                         error_handling_error.__class__.__name__,
                         exc_value.__class__.__name__,
                         error_handler_class.__name__,
                     )
 
         if not plugin_handled:
-
-            DefaultErrorHandler()._handle(exc_value)
+            _DefaultErrorHandler()._handle(exc_value)
 
         return True

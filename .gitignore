@@ -12,16 +12,18 @@ build
 eggs
 parts
 bin
+include
 var
 sdist
 develop-eggs
 .installed.cfg
+pyvenv.cfg
 lib
+share/
 lib64
 __pycache__
 venv*/
 .venv*/
-opentelemetry-python-contrib/
 
 # Installer logs
 pip-log.txt
@@ -61,3 +63,9 @@ target
 # Django example
 
 docs/examples/django/db.sqlite3
+
+# Semantic conventions
+scripts/semconv/semantic-conventions
+
+# Benchmark result files
+*-benchmark.json
